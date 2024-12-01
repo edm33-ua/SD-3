@@ -9,7 +9,7 @@ from encodings import idna
 
 MAP_ROWS = 20
 MAP_COLUMNS = 20
-SERVER = "172.21.242.83"
+
 FORMAT = 'utf-8'
 HEADER = 1024
 ACK = "ACK".encode(FORMAT)
@@ -20,7 +20,7 @@ SECONDS = 10
 
 global x, y, state, active, customerOnBoard, sensorsState
 
-global lockState, lockActive
+global lockState, lockActive, lockCustomerOnBoard, lockSensorsState
 
 global mapArray, lockMapArray
 
@@ -46,26 +46,33 @@ def calcLocation(posX, posY):
 # RETURNS: NONE
 # NEEDS: waitForACK()
 def sendState():
-    global customerOnBoard, x, y, active, state
+    global customerOnBoard, x, y, active, state, lockState, lockActive, lockCustomerOnBoard
     try:
         # Kafka producer
         producer = KafkaProducer(bootstrap_servers=str(BROKER_IP) + ':' + str(BROKER_PORT))
         while True:
+            print(state, active, customerOnBoard, x, y)
             tempState = ""
             user = ""
             tempActive = ""
+            lockState.acquire()
             if state:
                 tempState = "OK"
             else:
                 tempState = "KO"
+            lockState.release()
+            lockActive.acquire()
             if active:
                 tempActive = "Y"
             else:
                 tempActive = "N"
+            lockActive.release()
+            lockCustomerOnBoard.acquire()
             if customerOnBoard:
                 user = "Y"
             else: 
                 user = "N"
+            lockCustomerOnBoard.release()
             location = calcLocation(x, y)
             producer.send("DE2CentralState", ( ID + "_" + str(location).zfill(3) + "_" + tempState + "_" + tempActive + "_" + user).encode(FORMAT))
             print("[SEND STATE]" + ID + "_" + str(location).zfill(3) + "_" + tempState + "_" + tempActive + "_" + user)
@@ -295,10 +302,12 @@ def resume():
         lockActive.acquire()
         active = True
         lockActive.release()
+        lockState.acquire()
         if state:
             print("[TAXI MANAGEMENT] Resuming taxi's way")
         else:
             print("[TAXI MANAGEMENT] Imposible to Resume taxi's way. Taxi is stopped by sensors")
+        lockState.release()
     except Exception as e:
         print(f"[MOTION SERVICE] THERE HAS BEEN AN ERROR ON TAXI RESUMING: {e}")
     
@@ -337,23 +346,32 @@ def startSensorServer():
 # RETURNS: NONE
 # NEEDS: NONE  
 def manageSensor(conn, addr, listPosition):
-    global sensorsState
-    conn.settimeout(1)
+    global sensorsState, lockSensorsState
+    conn.settimeout(3)
+    lockSensorsState.acquire()
     sensorsState.append(True)
+    lockSensorsState.release()
     connected = True
     last_message_time = time.time()
     
     while connected:
         try:
+            
+            lockState.acquire()
             state = conn.recv(HEADER).decode(FORMAT)
+            lockState.release()
             if state:
                 current_time = time.time()
                 # If all sensors working correctly and no incidence occurs
                 if state == "OK":
+                    lockSensorsState.acquire()
                     sensorsState[listPosition] = True
+                    lockSensorsState.release()
                 # If sensor detects an incidence
                 if state == "KO":
+                    lockSensorsState.acquire()
                     sensorsState[listPosition] = False
+                    lockSensorsState.release()
                 last_message_time = current_time
                 conn.send(ACK)
             else:
@@ -364,13 +382,17 @@ def manageSensor(conn, addr, listPosition):
             # Check if it's been more than 5 seconds since the last message
             if time.time() - last_message_time > 5:
                 print(f"[SENSOR SERVER] NO MESSAGE FROM SENSOR {listPosition + 1} ON {addr} FOR MORE THAN 5 SENCONDS")
+                lockSensorsState.acquire()
                 sensorsState[listPosition] = False
+                lockSensorsState.release()
                 print(f"[SENSOR SERVER] LOST CONNECTION WITH TAXI SENSOR NUMBER {listPosition + 1} ON {addr}")
             # If not, continue the loop to check again
         except Exception as e:
             print(f"[SENSOR SERVER] ERROR WITH SENSOR ON {addr}: {e}")
             conn.close()
+            lockSensorsState.acquire()
             sensorsState[listPosition] = False
+            lockSensorsState.release()
             connected = False
     
     print(f"[SENSOR SERVER] Connection with sensor on {addr} closed.")
@@ -381,17 +403,21 @@ def manageSensor(conn, addr, listPosition):
 # RETURNS: NONE
 # NEEDS: NONE
 def checkSensors():
-    global state, sensorsState
+    global state, sensorsState, lockState, lockSensorsState
     try:
         while True:
             ok = True
+            lockSensorsState.acquire()
             for sensor in sensorsState:
                 if not sensor:
                     ok = False
                     break
+            lockSensorsState.release()
+            lockState.acquire()
             state = ok
+            lockState.release()
     except Exception as e:
-        print(f"[SENSOR MANAGEMENT]: THERE HAS BEEN AN ERROR WHILE CHECKING THE STATE OF THE SENSORS")
+        print(f"[SENSOR MANAGEMENT]: THERE HAS BEEN AN ERROR WHILE CHECKING THE STATE OF THE SENSORS {e}")
 
 ##########  TAXI AUTHENTICATION  ##########
 
@@ -547,18 +573,20 @@ def createMap(mainFrame):
 
 ########## STARTING POINT OF MAIN APPLICATION ##########
 
-if (len(sys.argv) == 7):
+if (len(sys.argv) == 8):
     # Argument management
     EC_CENTRAL_IP = sys.argv[1]
     EC_CENTRAL_PORT = int(sys.argv[2])
     BROKER_IP = sys.argv[3]
     BROKER_PORT = int(sys.argv[4])
     ID = str(sys.argv[5]).zfill(2)
-    PORT = int(sys.argv[6])
+    SERVER = sys.argv[6]
+    PORT = int(sys.argv[7])
     # Preparing data for future uses
     ADDR = (SERVER, PORT)
     EC_CENTRAL_ADDR = (EC_CENTRAL_IP, EC_CENTRAL_PORT)
     BROKER_ADDR = (BROKER_IP, BROKER_PORT)
+    
 
     x = y = 0
     active = False
@@ -569,6 +597,9 @@ if (len(sys.argv) == 7):
     lockState = threading.Lock()
     lockActive = threading.Lock()
     lockMapArray = threading.Lock()
+    lockCustomerOnBoard = threading.Lock()
+    lockSensorsState = threading.Lock()
+
 
     for i in range(MAP_COLUMNS * MAP_ROWS):
         mapArray.append("#")
@@ -625,4 +656,4 @@ if (len(sys.argv) == 7):
         print(f'EXITING DIGITAL ENGINE APPLICATION')
 
 else:
-    print("SORRY, INCORRECT PARAMETER USE. \nUSAGE: <EC_CENTRAL IP> <EC_CENTRAL PORT> <BROKER IP> <BROKER PORT> <TAXI ID> <LISTENING_PORT_SENSORS>")
+    print("SORRY, INCORRECT PARAMETER USE. \nUSAGE: <EC_CENTRAL IP> <EC_CENTRAL PORT> <BROKER IP> <BROKER PORT> <TAXI ID> <LISTENING_IP_SENSORS> <LISTENING_PORT_SENSORS>")
