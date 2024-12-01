@@ -12,7 +12,7 @@ import tkinter as tk
 from tkinter import ttk
 import encodings.idna
 
-SERVER = "172.21.242.82"
+# SERVER = "172.21.242.82"
 MAP_ROWS = 20
 MAP_COLUMNS = 20
 DATABASE = 'data/database.db'
@@ -1315,11 +1315,12 @@ def updateGUI(clientTable, mapButtons, root):
 
 ############ PROGRAM STARTING POINT ############ 
 
-if  (len(sys.argv) == 4):
+if  (len(sys.argv) == 5):
     # Argument management
-    PORT = int(sys.argv[1])
-    BROKER_IP = sys.argv[2]
-    BROKER_PORT = int(sys.argv[3])
+    SERVER = sys.argv[1]
+    PORT = int(sys.argv[2])
+    BROKER_IP = sys.argv[3]
+    BROKER_PORT = int(sys.argv[4])
     
     # Preparing data for future uses
     ADDR = (SERVER, PORT)               # Server address 
@@ -1422,4 +1423,4 @@ if  (len(sys.argv) == 4):
         print(f'EXITING CENTRAL APPLICATION')
 
 else:
-    print("Sorry, incorrect parameter use\n[USAGE <LISTENING PORT> <BROKER IP> <BROKER PORT>]")
+    print("Sorry, incorrect parameter use\n[USAGE <LISTENING IP> <LISTENING PORT> <BROKER IP> <BROKER PORT>]")
