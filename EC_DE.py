@@ -18,7 +18,7 @@ KO = "KO".encode(FORMAT)
 SECONDS = 10
 #MAP_CONF_FILENAME = "./conf/cityconf.txt"
 
-global x, y, state, active, customerOnBoard, sensorsState
+global x, y, state, active, customerOnBoard, sensorsState, sensorsIDs
 
 global lockState, lockActive, lockCustomerOnBoard, lockSensorsState
 
@@ -51,22 +51,24 @@ def sendState():
         # Kafka producer
         producer = KafkaProducer(bootstrap_servers=str(BROKER_IP) + ':' + str(BROKER_PORT))
         while True:
-            print(state, active, customerOnBoard, x, y)
             tempState = ""
             user = ""
             tempActive = ""
+            print("hasta aquí 1")
             lockState.acquire()
             if state:
                 tempState = "OK"
             else:
                 tempState = "KO"
             lockState.release()
+            print("hasta aquí 2")
             lockActive.acquire()
             if active:
                 tempActive = "Y"
             else:
                 tempActive = "N"
             lockActive.release()
+            print("hasta aquí 3")
             lockCustomerOnBoard.acquire()
             if customerOnBoard:
                 user = "Y"
@@ -74,11 +76,13 @@ def sendState():
                 user = "N"
             lockCustomerOnBoard.release()
             location = calcLocation(x, y)
+            print("State not sent yet")
             producer.send("DE2CentralState", ( ID + "_" + str(location).zfill(3) + "_" + tempState + "_" + tempActive + "_" + user).encode(FORMAT))
             print("[SEND STATE]" + ID + "_" + str(location).zfill(3) + "_" + tempState + "_" + tempActive + "_" + user)
             # Start background process to wait for an answer from Central Control
             time.sleep(0.5)
             ackThread = threading.Thread(target=waitForACK)
+            ackThread.daemon=True
             ackThread.start()
           
     # Manage any exception ocurred
@@ -88,19 +92,22 @@ def sendState():
     except Exception as e:
         print(f"[SEND STATE] AN ERROR OCURRED WHILE SENDING MY STATE: {e}")
     finally:
-        producer.close()
+        if 'producer' in locals() and producer is not None:
+            producer.close()
     
 # DESCRIPTION: Escucha en el topic de kafka Central2DE:ACK, esperando ACK de los mensajes de estado del taxi
 # STARTING_VALUES: NONE
 # RETURNS: NONE
 # NEEDS: NONE
 def waitForACK():
+    print("ACK function")
     try:
         ok = False
         # Kafka consumer
         ackListener = KafkaConsumer("Central2DEACK", bootstrap_servers=str(BROKER_IP)+':'+str(BROKER_PORT), consumer_timeout_ms=SECONDS*1000)
         for message in ackListener:
             decodedMessage = message.value.decode(FORMAT)
+            print("received: "+ decodedMessage)
             if ID in decodedMessage:
                 ok = True
                 break
@@ -114,7 +121,8 @@ def waitForACK():
     except Exception as e:
         print(f"[SEND STATE] AN ERROR OCURRED WHILE SENDING MY STATE: {e}")
     finally:
-        ackListener.close()
+        if 'producer' in locals() and ackListener is not None:
+            ackListener.close()
 
 # DESCRIPTION: Escucha el topic Central2DEOrder, añadiendo las peticiones de servicio a la lista de tareas
 # y ejecutando inmediatamente las órdenes de Stop y Resume
@@ -331,7 +339,7 @@ def startSensorServer():
         
         while True:
             conn, addr = server.accept()
-            thread = threading.Thread(target=manageSensor, args=(conn, addr, ACTIVE_SENSORS))
+            thread = threading.Thread(target=manageSensor, args=(conn, addr))
             thread.daemon = True
             thread.start()
             print(f"[SENSOR SERVER] New sensor connected from {addr}")
@@ -345,21 +353,37 @@ def startSensorServer():
 # STARTING_VALUES: conn [socket for the sensor], addr [IP adress of the sensor], listPosition [position on the list of]
 # RETURNS: NONE
 # NEEDS: NONE  
-def manageSensor(conn, addr, listPosition):
-    global sensorsState, lockSensorsState
+def manageSensor(conn, addr):
+    global sensorsState, sensorsIDs, lockSensorsState
     conn.settimeout(3)
-    lockSensorsState.acquire()
-    sensorsState.append(True)
-    lockSensorsState.release()
     connected = True
+
+    newSensorId = conn.recv(HEADER).decode(FORMAT)
+
+    cont = -1
+    found = False
+    lockSensorsState.acquire()
+    for sensorId in sensorsIDs:
+        cont = cont + 1
+        if sensorId == newSensorId:
+            found = True
+            break
+    listPosition = cont
+
+    if not found:
+        sensorsState.append(True)
+        sensorsIDs.append(newSensorId)
+        listPosition = cont + 1
+    lockSensorsState.release()
     last_message_time = time.time()
-    
+
     while connected:
         try:
-            
-            lockState.acquire()
-            state = conn.recv(HEADER).decode(FORMAT)
-            lockState.release()
+            data = conn.recv(HEADER).decode(FORMAT)
+            if data:
+                lockState.acquire()
+                state = data
+                lockState.release()
             if state:
                 current_time = time.time()
                 # If all sensors working correctly and no incidence occurs
@@ -593,6 +617,7 @@ if (len(sys.argv) == 8):
     state = True
     customerOnBoard = False
     sensorsState = []
+    sensorsIDs = []
     mapArray = []
     lockState = threading.Lock()
     lockActive = threading.Lock()

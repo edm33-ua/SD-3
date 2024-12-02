@@ -127,6 +127,8 @@ if  (len(sys.argv) == 4):
         client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         client.connect(ADDR)
         
+        client.send(ID.encode(FORMAT))
+
         # Start to process received data
         thread = threading.Thread(target=receive)
         thread.daemon = True
