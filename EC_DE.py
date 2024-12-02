@@ -47,6 +47,7 @@ def calcLocation(posX, posY):
 # NEEDS: waitForACK()
 def sendState():
     global customerOnBoard, x, y, active, state, lockState, lockActive, lockCustomerOnBoard
+    producer = None
     try:
         # Kafka producer
         producer = KafkaProducer(bootstrap_servers=str(BROKER_IP) + ':' + str(BROKER_PORT))
@@ -84,6 +85,7 @@ def sendState():
             ackThread = threading.Thread(target=waitForACK)
             ackThread.daemon=True
             ackThread.start()
+            time.sleep(0.5)
           
     # Manage any exception ocurred
     except KeyboardInterrupt:
@@ -92,7 +94,8 @@ def sendState():
     except Exception as e:
         print(f"[SEND STATE] AN ERROR OCURRED WHILE SENDING MY STATE: {e}")
     finally:
-        if 'producer' in locals() and producer is not None:
+        if producer is not None:
+            print(f"[SEND STATE] CLOSING PRODUCER")
             producer.close()
     
 # DESCRIPTION: Escucha en el topic de kafka Central2DE:ACK, esperando ACK de los mensajes de estado del taxi
@@ -101,6 +104,7 @@ def sendState():
 # NEEDS: NONE
 def waitForACK():
     print("ACK function")
+    ackListener = None
     try:
         ok = False
         # Kafka consumer
@@ -121,7 +125,8 @@ def waitForACK():
     except Exception as e:
         print(f"[SEND STATE] AN ERROR OCURRED WHILE SENDING MY STATE: {e}")
     finally:
-        if 'producer' in locals() and ackListener is not None:
+        if ackListener is not None:
+            print(f"[SEND STATE] CLOSING ACK LISTENER")
             ackListener.close()
 
 # DESCRIPTION: Escucha el topic Central2DEOrder, añadiendo las peticiones de servicio a la lista de tareas
