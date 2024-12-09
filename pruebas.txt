@@ -4,6 +4,36 @@ Cambiar ciudad -> si < 0 grados parar
 Cambiar clave simétrica de un taxi <- taxi deja de funcionar
 
 
+Cosas a hacer:
+    - Añadir módulo EC_CTC <- En central si está bajocero 
+    - Añadir módulo EC_Registry <- añadir base de datos para taxis registrados
+            + Opción alta y baja de taxi
+    - Añadir front
+
+    - Modificar:
+        Auditoría de eventos en la Central
+            - Crear fichero de logs si no se encuentra ya creado
+
+            - Por cada print (Evento, tanto de excepción como de acción) que haya en la central
+              añadir a archivo de logs: 
+                                + fecha y hora (precisión milisegundos) 
+                                + ip de la máquina que lo provoca <- ¡¡¡Debemos pasarla en los mensajes de kafka!!!
+                                + mismo texto (en nueva línea) [lo que en la práctica sería acción y descripción]
+
+
+        
+        Cifrado de los datos entre la Central y los Taxis <- afecta a las funciones de authenticate de EC_DE y EC_Central
+            - Taxi solicita
+            - Central envía Token + certificado
+            - Taxi envía ACK + guarda token (sesión) + certificado
+            - Central guarda token (hash en BD)  y certificado (BD?)
+
+        
+        Menú en EC_DE: <- GUI
+
+
+
+
 
 
 
@@ -14,4 +44,4 @@ Token no puede ir encriptado en los mensajes a través de kafka
 Tener un certificado en el taxi y el mismo en la central <- 0,5 puntos
 Que la central le envíe el certificado <- 1 punto
 
-Cuando vuelve a base se desconecta el taxi
+Cuando vuelve a base se desconecta el taxi -> token eliminado
