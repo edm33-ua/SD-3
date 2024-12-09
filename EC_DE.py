@@ -6,6 +6,7 @@ from kafka import KafkaProducer, KafkaConsumer
 import tkinter as tk
 from tkinter import ttk
 from encodings import idna
+import copy
 
 MAP_ROWS = 20
 MAP_COLUMNS = 20
@@ -22,7 +23,7 @@ global x, y, state, active, customerOnBoard, sensorsState, sensorsIDs
 
 global lockState, lockActive, lockCustomerOnBoard, lockSensorsState
 
-global mapArray, lockMapArray
+global mapArray, lockMapArray, lastMapArray, lockLastMapArray
 
 ##########  UTILITIES  ##########
 
@@ -505,7 +506,9 @@ def receiveMapState():
             receiver = KafkaConsumer("Central2DEMap", bootstrap_servers=str(BROKER_IP) + ':' + str(BROKER_PORT))
             for message in receiver:
                 decodedMessage = message.value.decode(FORMAT)
+                # print(f"Mapa recibido: {decodedMessage}")
                 translateMapMessage(decodedMessage)
+                print("Traducido!")
             
                 
         # Manage any exception ocurred
@@ -515,10 +518,17 @@ def receiveMapState():
             receiver.close()
 
 def translateMapMessage(mapMessage):
-    global lockMapArray, mapArray
+    global lockMapArray, mapArray, lastMapArray, lockLastMapArray
+    # time.sleep(0.8)
+    lockLastMapArray.acquire()
     lockMapArray.acquire()
+    # Deep copy of the map array
+    lastMapArray = copy.deepcopy(mapArray)
     mapArray = str(mapMessage).split(",")
+    print(lastMapArray)
+    print(mapArray)
     lockMapArray.release()
+    lockLastMapArray.release()
 
 
 
@@ -534,38 +544,48 @@ def onMapClick(x, y):
 # RETURNS: NONE
 # NEEDS: NONE
 def updateMap(mapButtons, root):
-    global lockMapArray, mapArray
+    global lockMapArray, mapArray, lastMapArray, lockLastMapArray
     try:
         # Changing map cells' state
         for i in range(MAP_COLUMNS):
             for j in range(MAP_ROWS):
-                color = "white"
-                infoText = ""
                 lockMapArray.acquire()
-                item = str(mapArray[i* MAP_COLUMNS + j])
-                lockMapArray.release()
-                if item != "#":
-                    infoText = item
-                    # Item is a location or a client
-                    if item.isalpha():
-                        # It is a location
-                        if item.isupper():
-                            color = "cyan"
-                        # It is a location
-                        elif item.islower():
-                            color = "yellow"
-                    # Item is a moving taxi
-                    elif item.isnumeric() or item.isalnum():
-                        color = "green"
-                    # Item is a broken or stopped taxi
-                    if "!" in item or "-" in item:
-                        color = "red"   
-                        if "-" in item:
-                            item.replace("-", "")
-                mapButtons[i][j].configure(bg = color, text = infoText)
+                lockLastMapArray.acquire()
+                if mapArray[i* MAP_COLUMNS + j] != lastMapArray[i* MAP_COLUMNS + j]:
+                    lockMapArray.release()
+                    lockLastMapArray.release()
+                    print("wow")
+                    color = "white"
+                    infoText = ""
+                    lockMapArray.acquire()
+                    item = str(mapArray[i* MAP_COLUMNS + j])
+                    lockMapArray.release()
+                    
+                    if item != "#":
+                        infoText = item
+                        # Item is a location or a client
+                        if item.isalpha():
+                            # It is a location
+                            if item.isupper():
+                                color = "cyan"
+                            # It is a location
+                            elif item.islower():
+                                color = "yellow"
+                        # Item is a moving taxi
+                        elif item.isnumeric() or item.isalnum():
+                            color = "green"
+                        # Item is a broken or stopped taxi
+                        if "!" in item or "-" in item:
+                            color = "red"   
+                            if "-" in item:
+                                item.replace("-", "")
+                    mapButtons[i][j].configure(bg = color, text = infoText)
+                else:
+                    lockMapArray.release()
+                    lockLastMapArray.release()
         print(f"[GUI MAP CREATOR]: Updated map.")                    
                     
-        root.after(1000, lambda: updateMap(mapButtons, root))
+        root.after(500, lambda: updateMap(mapButtons, root))
     except Exception as e:
         print(f"[GUI MAP UPDATER]: THERE HAS BEEN AN ERROR WHILE UPDATING THE MAP. {e}")
     
@@ -624,11 +644,13 @@ if (len(sys.argv) == 8):
     sensorsState = []
     sensorsIDs = []
     mapArray = []
+    lastMapArray = []
     lockState = threading.Lock()
     lockActive = threading.Lock()
     lockMapArray = threading.Lock()
     lockCustomerOnBoard = threading.Lock()
     lockSensorsState = threading.Lock()
+    lockLastMapArray = threading.Lock()
 
 
     for i in range(MAP_COLUMNS * MAP_ROWS):
