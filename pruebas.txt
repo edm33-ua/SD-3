@@ -13,3 +13,5 @@ Token no puede ir encriptado en los mensajes a través de kafka
 
 Tener un certificado en el taxi y el mismo en la central <- 0,5 puntos
 Que la central le envíe el certificado <- 1 punto
+
+Cuando vuelve a base se desconecta el taxi
