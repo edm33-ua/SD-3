@@ -1,0 +1,15 @@
+Cambiar api key para que no sea correcta -> avisar pero continuar con ejecución
+Cambiar ciudad -> si < 0 grados parar
+
+Cambiar clave simétrica de un taxi <- taxi deja de funcionar
+
+
+
+
+
+
+Ideas importantes:
+Token no puede ir encriptado en los mensajes a través de kafka
+
+Tener un certificado en el taxi y el mismo en la central <- 0,5 puntos
+Que la central le envíe el certificado <- 1 punto
