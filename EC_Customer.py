@@ -149,7 +149,7 @@ def askForTaxi(destination):
         if producer != None:
             producer.close()
 
-def mainLoop():
+def programLoop():
     for petition in data["Requests"]:
                 locationID = petition["Id"]
                 print(f"Going to: {locationID}")
@@ -168,7 +168,7 @@ def mainLoop():
 
 # DESCRIPTION: Crea los elementos de la interfaz gráfica
 # STARTING_VALUES: el marco principal de la aplicación
-# RETURNS: NONE
+# RETURNS: Las etiquetas (Label) de la interfaz que muestran el estado y la posición del usuario
 # NEEDS: NONE
 def designInterface(mainFrame):
     global currentPosition, state
@@ -182,8 +182,22 @@ def designInterface(mainFrame):
     mainLabel.pack(padx=5, pady=5)
     infoLabel.pack(padx=5, pady=5)
     stateLabel.pack(padx=5, pady=5)
+    return infoLabel, stateLabel
 
-# updateGUI(root)
+# DESCRIPTION: Actualiza los elementos de la interfaz gráfica
+# STARTING_VALUES: Las etiquetas (Label) de la interfaz que muestran el estado y la posición del usuario
+# RETURNS: NONE
+# NEEDS: NONE
+def updateGUI(root, infoLabel, stateLabel):
+    global currentPosition, state
+    if state == "Montado":
+        infoLabel.config(text="Ahora mismo te encuentras en movimiento")
+    else:
+        infoLabel.config(text="Ahora mismo te encuentras en "+currentPosition)
+    stateLabel.config(text="ESTADO: "+ state)
+
+    root.after(1000, lambda: updateGUI(root, infoLabel, stateLabel))
+
 
 #############################
 ##  Program starting point  #
@@ -208,15 +222,15 @@ if len(sys.argv) == 5:
             mainFrame = ttk.Frame(root, padding="10")
             mainFrame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
             # Create tables for taxi and customer
-            button = designInterface(mainFrame)
+            infoLabel, stateLabel = designInterface(mainFrame)
 
 
 
-            mainThread = threading.Thread(target=mainLoop)
+            mainThread = threading.Thread(target=programLoop)
             mainThread.daemon = True
             mainThread.start()
 
-            # root.after(1000, lambda: updateGUI(root))
+            root.after(1000, lambda: updateGUI(root, infoLabel, stateLabel))
             root.mainloop()
         except KeyboardInterrupt:
             print(f'[CUSTOMER APPLICATION] Application shutdown due to human interaction')
