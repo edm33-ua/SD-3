@@ -45,3 +45,8 @@ Tener un certificado en el taxi y el mismo en la central <- 0,5 puntos
 Que la central le envíe el certificado <- 1 punto
 
 Cuando vuelve a base se desconecta el taxi -> token eliminado
+
+
+
+Dudas:
+¿Central tiene que enviar la clave simétrica al taxi que emplearán para cifrar la comunicación?
