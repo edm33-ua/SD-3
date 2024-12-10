@@ -504,7 +504,7 @@ def authenticate(EC_CENTRAL_ADDR):
 
 ############ GRAPHICAL USER INTERFACE ############ 
 
-def receiveMapState():
+def receiveMapState(mapButtons):
     while True:
         try:
             # Kafka producer and consumer
@@ -514,6 +514,7 @@ def receiveMapState():
                 # print(f"Mapa recibido: {decodedMessage}")
                 translateMapMessage(decodedMessage)
                 print("Traducido!")
+                updateMap(mapButtons)
             
                 
         # Manage any exception ocurred
@@ -548,7 +549,7 @@ def onMapClick(x, y):
 # STARTING_VALUES: mapa, en forma de matriz de botones
 # RETURNS: NONE
 # NEEDS: NONE
-def updateMap(mapButtons, root):
+def updateMap(mapButtons):
     global lockMapArray, mapArray, lastMapArray, lockLastMapArray
     try:
         # Changing map cells' state
@@ -590,7 +591,7 @@ def updateMap(mapButtons, root):
                     lockLastMapArray.release()
         print(f"[GUI MAP CREATOR]: Updated map.")                    
                     
-        root.after(500, lambda: updateMap(mapButtons, root))
+        # root.after(500, lambda: updateMap(mapButtons, root))
     except Exception as e:
         print(f"[GUI MAP UPDATER]: THERE HAS BEEN AN ERROR WHILE UPDATING THE MAP. {e}")
     
@@ -693,11 +694,11 @@ if (len(sys.argv) == 8):
             receiveInstructionsThread.start()
             
             ## Creating a thread for receiving orders from Central Control ##
-            receiveMapStateThread = threading.Thread(target=receiveMapState)
+            receiveMapStateThread = threading.Thread(target=receiveMapState, args=(mapButtons, ))
             receiveMapStateThread.daemon = True
             receiveMapStateThread.start()
 
-            root.after(1000, lambda: updateMap(mapButtons, root))
+            # root.after(1000, lambda: updateMap(mapButtons, root))
             root.mainloop()
             # while True:
             #     pass
