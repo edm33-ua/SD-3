@@ -11,6 +11,7 @@ import time
 import tkinter as tk
 from tkinter import ttk
 import encodings.idna
+import ssl
 
 # SERVER = "172.21.242.82"
 MAP_ROWS = 20
@@ -748,6 +749,7 @@ def startAuthenticationService(SERVER, PORT):
     try:
         #We first create the socket,
         server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         # then bind it to the ip address and port,
         server.bind((SERVER, PORT))
 
@@ -758,7 +760,10 @@ def startAuthenticationService(SERVER, PORT):
         
         while True:
             try:
-                conn, addr = server.accept()
+                client_socket, addr = server.accept()
+                conn = ssl.wrap_socket(client_socket, server_side=True, 
+		                                certfile="./CentralCertificate/server.crt", keyfile="./CentralCertificate/server.key",
+		                                ssl_version=ssl.PROTOCOL_TLSv1)
                 thread = threading.Thread(target=authenticate, args=(conn, addr))
                 thread.daemon = True
                 thread.start()
@@ -1402,6 +1407,7 @@ if  (len(sys.argv) == 5):
         clientTable = createTables(mainFrame)
         # Create map of size 20x20
         mapButtons = createMap(mainFrame)
+        time.sleep(3)
 
         # # We create a thread to begin listening the LOCATION and DESTINATION messages
         # hearLocationAndDestination = threading.Thread(target=updateGUI, args=(taxiTable, clientTable, mapButtons))

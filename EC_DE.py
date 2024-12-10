@@ -7,6 +7,7 @@ import tkinter as tk
 from tkinter import ttk
 from encodings import idna
 import copy
+import ssl
 
 MAP_ROWS = 20
 MAP_COLUMNS = 20
@@ -457,7 +458,11 @@ def checkSensors():
 # RETURNS: True [si se ha realizado correctamente]; False si ha habido algún problema
 # NEEDS: NONE
 def authenticate(EC_CENTRAL_ADDR):
-    client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    context = ssl.SSLContext(ssl.PROTOCOL_TLSv1)
+
+    conn = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    
+    client = context.wrap_socket(conn)
     
     # Stablish connection and send message 
     try:
