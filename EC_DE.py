@@ -24,6 +24,8 @@ global x, y, state, active, customerOnBoard, sensorsState, sensorsIDs
 
 global lockState, lockActive, lockCustomerOnBoard, lockSensorsState
 
+global registered, authenticated
+
 global mapArray, lockMapArray, lastMapArray, lockLastMapArray
 
 ##########  UTILITIES  ##########
@@ -502,8 +504,24 @@ def authenticate(EC_CENTRAL_ADDR):
         client.close()
 
 
+def register():
+    global registered
+    print("--------REGISTRO EL TAXI")
+    registered = True
+
+
+def tempAuthenticate():
+    #   Función eliminable
+    global authenticated
+    print("--------AUTENTICO EL TAXI")
+    authenticated = True
+
 ############ GRAPHICAL USER INTERFACE ############ 
 
+# DESCRIPTION: Recibe la cadena de caracteres con la información del estado del mapa y actualiza este en memoria y en la GUI
+# STARTING_VALUES: El array de botones de la GUI
+# RETURNS: NONE
+# NEEDS: translateMapMessage
 def receiveMapState(mapButtons):
     while True:
         try:
@@ -523,6 +541,10 @@ def receiveMapState(mapButtons):
         finally:
             receiver.close()
 
+# DESCRIPTION: Convierte la cadena de caracteres recibida en un array y actualiza el estado del mapa
+# STARTING_VALUES: La cadena de caracteres con la información del mapa
+# RETURNS: NONE
+# NEEDS: NONE
 def translateMapMessage(mapMessage):
     global lockMapArray, mapArray, lastMapArray, lockLastMapArray
     # time.sleep(0.8)
@@ -595,14 +617,70 @@ def updateMap(mapButtons):
     except Exception as e:
         print(f"[GUI MAP UPDATER]: THERE HAS BEEN AN ERROR WHILE UPDATING THE MAP. {e}")
     
+# DESCRIPTION: Actualiza la información del taxi
+# STARTING_VALUES: El objeto etiqueta de la GUI
+# RETURNS: NONE
+# NEEDS: NONE
+def updateInfoGUI(mapButtons, root):
+    global authenticated, registered
+     # Información sobre estado del taxi
+    stateInfo = "Estado: "
+
+    if authenticated:
+        stateInfo = stateInfo + "AUTENTICADO"
+    elif registered:
+        stateInfo = stateInfo + "REGISTRADO"
+    else:
+        stateInfo = stateInfo + "SIN REGISTRAR"
+
+    infoLabel.config(text=stateInfo)
+    root.after(1000, lambda: updateInfoGUI(infoLabel, root))
 
 
 # DESCRIPTION: Almacena en selectedPos la posición del mapa seleccionada
 # STARTING_VALUES: Frame principal de la interfaz gráfica
 # RETURNS: el mapa, en forma de matriz de botones
 # NEEDS: NONE
-def createMap(mainFrame):
+def createGUI(mainFrame):
+    global registered, authenticated
     try:
+        # MENÚ PARA EL CONTROL DE REGISTRO Y AUTENTICACIÓN
+        # Marco de información y control sobre el taxi
+        leftFrame = ttk.Frame(mainFrame)
+        leftFrame.grid(row=0, column=0, padx=30, pady=10)
+
+        menuFrame = ttk.LabelFrame(leftFrame, text="MENÚ")
+        menuFrame.grid(row=0, column=0, padx=5, pady=5, sticky=(tk.W, tk.E))
+
+        # Marco de información del taxi
+        infoFrame = ttk.LabelFrame(menuFrame, text="TAXI "+ str(ID) +" INFO:")
+        infoFrame.grid(row=0, column=0, sticky=(tk.W, tk.E))
+        
+        # Información sobre estado del taxi
+        stateInfo = "Estado: "
+
+        if authenticated:
+            stateInfo = stateInfo + "AUTENTICADO"
+        elif registered:
+            stateInfo = stateInfo + "REGISTRADO"
+        else:
+            stateInfo = stateInfo + "SIN REGISTRAR"
+
+        infoLabel = ttk.Label(infoFrame, text=stateInfo)
+        infoLabel.pack(padx=5, pady=5)
+
+        optionsFrame = ttk.LabelFrame(menuFrame, text="OPCIONES")
+        optionsFrame.grid(row=1, column=0, sticky=(tk.W, tk.E))
+
+        # Opciones del menú
+        registerButton = ttk.Button(optionsFrame, text="REGISTRAR", command=lambda: register())
+        registerButton.pack(side=tk.BOTTOM, padx=5)
+
+        authenticateButton = ttk.Button(optionsFrame, text="AUTENTICAR", command=lambda: tempAuthenticate())
+        authenticateButton.pack(side=tk.BOTTOM, padx=5)
+
+        # MAPA
+
         # Marco para el mapa
         mapFrame = ttk.LabelFrame(mainFrame, text="Mapa de la Ciudad (20x20)")
         mapFrame.grid(row=0, column=1, padx=10, pady=10)
@@ -619,9 +697,9 @@ def createMap(mainFrame):
                 btn.grid(row=i, column=j, padx=1, pady=1)
                 row.append(btn)
             mapButtons.append(row)
-        return mapButtons
+        return infoLabel, mapButtons
     except Exception as e:
-        print(f"[GUI MAP CREATOR]: THERE HAS BEEN AN ERROR WHILE CREATING THE MAP. {e}")
+        print(f"[GUI CREATOR]: THERE HAS BEEN AN ERROR WHILE CREATING THE GUI. {e}")
 
 
 
@@ -647,6 +725,8 @@ if (len(sys.argv) == 8):
     active = False
     state = True
     customerOnBoard = False
+    registered = False
+    authenticated = False
     sensorsState = []
     sensorsIDs = []
     mapArray = []
@@ -670,9 +750,9 @@ if (len(sys.argv) == 8):
         mainFrame = ttk.Frame(root, padding="10")
         mainFrame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         # Create map of size 20x20
-        mapButtons = createMap(mainFrame)
+        infoLabel, mapButtons = createGUI(mainFrame)
         
-
+        root.after(1000, lambda: updateInfoGUI(infoLabel, root))
 
         if authenticate(EC_CENTRAL_ADDR):
             ## Creating a thread for Sensor Server ##
@@ -698,7 +778,7 @@ if (len(sys.argv) == 8):
             receiveMapStateThread.daemon = True
             receiveMapStateThread.start()
 
-            # root.after(1000, lambda: updateMap(mapButtons, root))
+            
             root.mainloop()
             # while True:
             #     pass
