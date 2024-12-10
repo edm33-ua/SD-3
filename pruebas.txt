@@ -8,7 +8,7 @@ Cosas a hacer:
     - Añadir módulo EC_CTC <- En central si está bajocero 
     - Añadir módulo EC_Registry <- añadir base de datos para taxis registrados
             + Opción alta y baja de taxi
-    - Añadir front
+    - Añadir módulo front
 
     - Modificar:
         Auditoría de eventos en la Central
