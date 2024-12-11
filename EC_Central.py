@@ -14,6 +14,7 @@ import encodings.idna
 import ssl
 from secrets import token_hex
 from cryptography.fernet import Fernet
+import hashlib
 
 # SERVER = "172.21.242.82"
 MAP_ROWS = 20
