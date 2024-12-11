@@ -1,4 +1,5 @@
 import sys
+from flask import Flask, request, jsonify
 import threading
 import time
 import socket
@@ -9,6 +10,7 @@ from encodings import idna
 import copy
 import ssl
 import requests
+import hashlib
 
 MAP_ROWS = 20
 MAP_COLUMNS = 20
@@ -30,10 +32,6 @@ global lockState, lockActive, lockCustomerOnBoard, lockSensorsState
 global registered, authenticated
 
 global mapArray, lockMapArray, lastMapArray, lockLastMapArray
-
-##########  REGISTRY METHODS  ##########
-
-
 
 ##########  UTILITIES  ##########
 
@@ -510,17 +508,48 @@ def authenticate(EC_CENTRAL_ADDR):
     finally: 
         client.close()
 
-
-def register():
-    global registered
-    print("--------REGISTRO EL TAXI")
-    registered = True
-
 def tempAuthenticate():
     #   Función eliminable
     global authenticated
     print("--------AUTENTICO EL TAXI")
     authenticated = True
+
+##########  REGISTRY METHODS  ##########
+# DESCRIPTION: Da de baja al taxi, pasandole la id y password por parámetro
+# STARTING_VALUES: id del taxi, y la contraseña
+# RETURNS: -1, si ha habido un error, 0 si no se ha encontrado un taxi con los mismos parámetros, 1 si se ha podido borrar
+# NEEDS: NONE
+def leave(id, password):
+    global registered
+    url = 'https://' + REGISTRYIP + ':' + APIPORT + '/deleteTaxi'
+    payload = {'id': str(id), 'password': hashlib.md5(('*/' + str(password) + '/*').encode()).hexdigest()}
+    response = requests.post(url, json=payload, verify=False)
+    response = response.json
+    if response["response"] == 'OK':
+        registered = False
+        return 1
+    elif response["response"] == 'KO':
+        return 0
+    elif response["respnse"] == 'ERR':
+        return -1
+    
+# DESCRIPTION: Da de alta al taxi, pasandole la id y password por parámetro
+# STARTING_VALUES: id del taxi, y la contraseña
+# RETURNS: -1, si ha habido un error, 0 si ya hay un taxi con esa id, 1 si se ha podido registrar correctamente
+# NEEDS: NONE
+def register(id, password):
+    global registered
+    url = 'https://' + REGISTRYIP + ':' + APIPORT + '/addTaxi'
+    payload = {'id': str(id), 'password': hashlib.md5(('*/' + str(password) + '/*').encode()).hexdigest()}
+    response = requests.post(url, json=payload, verify=False)
+    response = response.json
+    if response["response"] == 'OK':
+        registered = True
+        return 1
+    elif response["response"] == 'KO':
+        return 0
+    elif response["respnse"] == 'ERR':
+        return -1
 
 ############ GRAPHICAL USER INTERFACE ############ 
 
