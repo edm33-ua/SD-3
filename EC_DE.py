@@ -26,6 +26,9 @@ global lockState, lockActive, lockCustomerOnBoard, lockSensorsState
 
 global registered, authenticated
 
+# Token y certificado de la sesión actual  (False si no está autenticado)
+global token, certificate
+
 global mapArray, lockMapArray, lastMapArray, lockLastMapArray
 
 ##########  UTILITIES  ##########
@@ -456,10 +459,11 @@ def checkSensors():
 
 # Connection through Sockets
 # DESCRIPTION: Sends a message to the Central Control with the taxi ID and waits for it to answer with OK or KO
-# STARTING_VALUES: EC_CENTRAL_ADDR [IP:Puerto de la central]
+# STARTING_VALUES: NONE
 # RETURNS: True [si se ha realizado correctamente]; False si ha habido algún problema
 # NEEDS: NONE
-def authenticate(EC_CENTRAL_ADDR):
+def authenticate(reauth=False):
+    global token, certificate
     context = ssl.SSLContext(ssl.PROTOCOL_TLSv1)
 
     conn = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -472,7 +476,12 @@ def authenticate(EC_CENTRAL_ADDR):
         print(EC_CENTRAL_ADDR)
         client.connect((EC_CENTRAL_ADDR[0], int(EC_CENTRAL_ADDR[1])))
         print(f"[AUTHENTICATION PROCESS]: Sending Taxi ID: {ID}")
-        client.send(ID.encode(FORMAT))
+        message = str(ID) + "_" + str(PASSWD)
+        if reauth:
+            message = message + "_reauth"
+        else:
+            message = message + "_auth"
+        client.send(message.encode(FORMAT))
     except ConnectionError:
         print(f"[AUTHENTICATION PROCESS]: Unable to find CENTRAL CONTROL SERVER on {EC_CENTRAL_ADDR}")
         client.close()
@@ -481,19 +490,24 @@ def authenticate(EC_CENTRAL_ADDR):
 
     try:
         while True:
-            answer = client.recv(HEADER).decode(FORMAT)
+            receivedMessage = client.recv(HEADER).decode(FORMAT)
+            splitMessage = receivedMessage.split("_")
+            answer = splitMessage[0]
+
             if answer:
                 if answer == "OK":
                     print(f"[AUTHENTICATION PROCESS]: Authenticated sucessfully")
+                    token = splitMessage[1]
+                    certificate = splitMessage[2]
                     client.close()
                     return True
                       
                 elif answer == "KO":
-                    print(f"[AUTHENTICATION PROCESS]: Authenticated failed")
+                    print(f"[AUTHENTICATION PROCESS]: Authentication failed")
                     client.close()  
                     return False
                 else:
-                    print(f"[AUTHENTICATION PROCESS]: Error 'message not understood'")
+                    print(f"[AUTHENTICATION PROCESS]: ERROR: MESSAGE NOT UNDERSTOOD")
                     client.close() 
                     return False
     except ConnectionError:
@@ -706,15 +720,16 @@ def createGUI(mainFrame):
 
 ########## STARTING POINT OF MAIN APPLICATION ##########
 
-if (len(sys.argv) == 8):
+if (len(sys.argv) == 9):
     # Argument management
     EC_CENTRAL_IP = sys.argv[1]
     EC_CENTRAL_PORT = int(sys.argv[2])
     BROKER_IP = sys.argv[3]
     BROKER_PORT = int(sys.argv[4])
     ID = str(sys.argv[5]).zfill(2)
-    SERVER = sys.argv[6]
-    PORT = int(sys.argv[7])
+    PASSWD = str(sys.argv[6])
+    SERVER = sys.argv[7]
+    PORT = int(sys.argv[8])
     # Preparing data for future uses
     ADDR = (SERVER, PORT)
     EC_CENTRAL_ADDR = (EC_CENTRAL_IP, EC_CENTRAL_PORT)
@@ -722,6 +737,8 @@ if (len(sys.argv) == 8):
     
 
     x = y = 0
+    token = False
+    certificate = False
     active = False
     state = True
     customerOnBoard = False
@@ -754,7 +771,7 @@ if (len(sys.argv) == 8):
         
         root.after(1000, lambda: updateInfoGUI(infoLabel, root))
 
-        if authenticate(EC_CENTRAL_ADDR):
+        if authenticate():
             ## Creating a thread for Sensor Server ##
             sensorThread = threading.Thread(target=startSensorServer)
             sensorThread.daemon = True
@@ -780,8 +797,6 @@ if (len(sys.argv) == 8):
 
             
             root.mainloop()
-            # while True:
-            #     pass
         
         # Printing exit message
         print("[DIGITAL ENGINE] Execution finished. Exiting application")
@@ -794,4 +809,4 @@ if (len(sys.argv) == 8):
         print(f'EXITING DIGITAL ENGINE APPLICATION')
 
 else:
-    print("SORRY, INCORRECT PARAMETER USE. \nUSAGE: <EC_CENTRAL IP> <EC_CENTRAL PORT> <BROKER IP> <BROKER PORT> <TAXI ID> <LISTENING_IP_SENSORS> <LISTENING_PORT_SENSORS>")
+    print("SORRY, INCORRECT PARAMETER USE. \nUSAGE: <EC_CENTRAL IP> <EC_CENTRAL PORT> <BROKER IP> <BROKER PORT> <TAXI ID> <PASSWORD> <LISTENING_IP_SENSORS> <LISTENING_PORT_SENSORS>")
