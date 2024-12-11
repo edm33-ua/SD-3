@@ -793,33 +793,6 @@ def authenticate(conn, addr):
             else:
                 conn.send("KO".encode(FORMAT))
                 print(f"[TAXI AUTHENTICATION SERVICE]: Taxi authentication rejected for taxi {taxiId}")
-
-
-
-
-            # CÓDIGO ORIGINAL - BORRAR
-            taxiId = conn.recv(HEADER).decode(FORMAT)
-            if taxiId:  
-                print(f"[TAXI AUTHENTICATION SERVICE]: Starting taxi authentication for TAXI {taxiId}")                    
-                # Search on internal memory
-                found = findTaxiID(taxiId)
-                if not found:
-                    conn.send("OK".encode(FORMAT))
-                    print(f"[TAXI AUTHENTICATION SERVICE]: TAXI {taxiId} authentication completed")
-                    # And add it to the internal memory (dictionary)
-                    memLock.acquire()
-                    newValue = Taxi(taxiId, 'OK', 'N', 'N', '-', 'N', '000')
-                    internalMemory.update({taxiId: newValue})
-                    memLock.release()
-                    # As well as creating its disconnection counter
-                    connDicLock.acquire()
-                    connDictionary.update({newValue.id: 0})
-                    connDicLock.release()
-                    break
-                else:
-                    conn.send("KO".encode(FORMAT))
-                    print(f"[TAXI AUTHENTICATION SERVICE]: TAXI {taxiId} failed")
-                    break
                 
         except socket.timeout:
             print("[TAXI AUTHENTICATION SERVICE]: LOST connection with taxi")
