@@ -57,46 +57,47 @@ def calcLocation(posX, posY):
 # RETURNS: NONE
 # NEEDS: waitForACK()
 def sendState():
-    global customerOnBoard, x, y, active, state, lockState, lockActive, lockCustomerOnBoard
+    global customerOnBoard, x, y, active, state, lockState, lockActive, lockCustomerOnBoard, authenticated
     producer = None
     try:
         # Kafka producer
         producer = KafkaProducer(bootstrap_servers=str(BROKER_IP) + ':' + str(BROKER_PORT))
         while True:
-            tempState = ""
-            user = ""
-            tempActive = ""
-            print("hasta aquí 1")
-            lockState.acquire()
-            if state:
-                tempState = "OK"
-            else:
-                tempState = "KO"
-            lockState.release()
-            print("hasta aquí 2")
-            lockActive.acquire()
-            if active:
-                tempActive = "Y"
-            else:
-                tempActive = "N"
-            lockActive.release()
-            print("hasta aquí 3")
-            lockCustomerOnBoard.acquire()
-            if customerOnBoard:
-                user = "Y"
-            else: 
-                user = "N"
-            lockCustomerOnBoard.release()
-            location = calcLocation(x, y)
-            print("State not sent yet")
-            producer.send("DE2CentralState", ( ID + "_" + str(location).zfill(3) + "_" + tempState + "_" + tempActive + "_" + user).encode(FORMAT))
-            print("[SEND STATE]" + ID + "_" + str(location).zfill(3) + "_" + tempState + "_" + tempActive + "_" + user)
-            # Start background process to wait for an answer from Central Control
-            time.sleep(0.5)
-            ackThread = threading.Thread(target=waitForACK)
-            ackThread.daemon=True
-            ackThread.start()
-            time.sleep(0.5)
+            if authenticated:
+                tempState = ""
+                user = ""
+                tempActive = ""
+                print("hasta aquí 1")
+                lockState.acquire()
+                if state:
+                    tempState = "OK"
+                else:
+                    tempState = "KO"
+                lockState.release()
+                print("hasta aquí 2")
+                lockActive.acquire()
+                if active:
+                    tempActive = "Y"
+                else:
+                    tempActive = "N"
+                lockActive.release()
+                print("hasta aquí 3")
+                lockCustomerOnBoard.acquire()
+                if customerOnBoard:
+                    user = "Y"
+                else: 
+                    user = "N"
+                lockCustomerOnBoard.release()
+                location = calcLocation(x, y)
+                print("State not sent yet")
+                producer.send("DE2CentralState", ( ID + "_" + str(location).zfill(3) + "_" + tempState + "_" + tempActive + "_" + user).encode(FORMAT))
+                print("[SEND STATE]" + ID + "_" + str(location).zfill(3) + "_" + tempState + "_" + tempActive + "_" + user)
+                # Start background process to wait for an answer from Central Control
+                time.sleep(0.5)
+                ackThread = threading.Thread(target=waitForACK)
+                ackThread.daemon=True
+                ackThread.start()
+                time.sleep(0.5)
           
     # Manage any exception ocurred
     except KeyboardInterrupt:
@@ -554,8 +555,11 @@ def register(id, password):
     global registered
     url = 'https://' + REGISTRYIP + ':' + APIPORT + '/addTaxi'
     payload = {'id': str(id), 'password': str(password)}
+    print("eyeye1")
     response = requests.post(url, json=payload, verify=False)
+    print("eyeye2")
     response = response.json()
+    print("eyeye3")
     if response["response"] == 'OK':
         registered = True
         return 1
@@ -579,7 +583,6 @@ def receiveMapState(mapButtons):
                 decodedMessage = message.value.decode(FORMAT)
                 # print(f"Mapa recibido: {decodedMessage}")
                 translateMapMessage(decodedMessage)
-                print("Traducido!")
                 updateMap(mapButtons)
             
                 
@@ -601,8 +604,6 @@ def translateMapMessage(mapMessage):
     # Deep copy of the map array
     lastMapArray = copy.deepcopy(mapArray)
     mapArray = str(mapMessage).split(",")
-    print(lastMapArray)
-    print(mapArray)
     lockMapArray.release()
     lockLastMapArray.release()
 
@@ -721,10 +722,10 @@ def createGUI(mainFrame):
         optionsFrame.grid(row=1, column=0, sticky=(tk.W, tk.E))
 
         # Opciones del menú
-        registerButton = ttk.Button(optionsFrame, text="REGISTRAR", command=lambda: register())
+        registerButton = ttk.Button(optionsFrame, text="REGISTRAR", command=lambda: register(ID, PASSWD))
         registerButton.pack(side=tk.BOTTOM, padx=5)
 
-        authenticateButton = ttk.Button(optionsFrame, text="AUTENTICAR", command=lambda: tempAuthenticate())
+        authenticateButton = ttk.Button(optionsFrame, text="AUTENTICAR", command=lambda: authenticate())
         authenticateButton.pack(side=tk.BOTTOM, padx=5)
 
         # MAPA
@@ -806,32 +807,31 @@ if (len(sys.argv) == 9):
         
         root.after(1000, lambda: updateInfoGUI(infoLabel, root))
 
-        if authenticate():
-            ## Creating a thread for Sensor Server ##
-            sensorThread = threading.Thread(target=startSensorServer)
-            sensorThread.daemon = True
-            sensorThread.start()
-            ## Creating a thread for Checking the state of all sensors ##
-            checkState = threading.Thread(target=checkSensors)
-            checkState.daemon = True
-            checkState.start()
-            ## Creating a thread for sending periodically the state of the taxi ##
-            sendStateThread = threading.Thread(target=sendState)
-            sendStateThread.daemon = True
-            sendStateThread.start()
+        ## Creating a thread for Sensor Server ##
+        sensorThread = threading.Thread(target=startSensorServer)
+        sensorThread.daemon = True
+        sensorThread.start()
+        ## Creating a thread for Checking the state of all sensors ##
+        checkState = threading.Thread(target=checkSensors)
+        checkState.daemon = True
+        checkState.start()
+        ## Creating a thread for sending periodically the state of the taxi ##
+        sendStateThread = threading.Thread(target=sendState)
+        sendStateThread.daemon = True
+        sendStateThread.start()
 
-            ## Creating a thread for receiving orders from Central Control ##
-            receiveInstructionsThread = threading.Thread(target=receiveInstructions)
-            receiveInstructionsThread.daemon = True
-            receiveInstructionsThread.start()
-            
-            ## Creating a thread for receiving orders from Central Control ##
-            receiveMapStateThread = threading.Thread(target=receiveMapState, args=(mapButtons, ))
-            receiveMapStateThread.daemon = True
-            receiveMapStateThread.start()
+        ## Creating a thread for receiving orders from Central Control ##
+        receiveInstructionsThread = threading.Thread(target=receiveInstructions)
+        receiveInstructionsThread.daemon = True
+        receiveInstructionsThread.start()
+        
+        ## Creating a thread for receiving orders from Central Control ##
+        receiveMapStateThread = threading.Thread(target=receiveMapState, args=(mapButtons, ))
+        receiveMapStateThread.daemon = True
+        receiveMapStateThread.start()
 
             
-            root.mainloop()
+        root.mainloop()
         
         # Printing exit message
         print("[DIGITAL ENGINE] Execution finished. Exiting application")
