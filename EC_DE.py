@@ -521,7 +521,7 @@ def tempAuthenticate():
 def leave(id, password):
     global registered
     url = 'https://' + REGISTRYIP + ':' + APIPORT + '/deleteTaxi'
-    payload = {'id': str(id), 'password': hashlib.md5(('*/' + str(password) + '/*').encode()).hexdigest()}
+    payload = {'id': str(id), 'password': str(password)}
     response = requests.post(url, json=payload, verify=False)
     response = response.json()
     if response["response"] == 'OK':
@@ -539,7 +539,7 @@ def leave(id, password):
 def register(id, password):
     global registered
     url = 'https://' + REGISTRYIP + ':' + APIPORT + '/addTaxi'
-    payload = {'id': str(id), 'password': hashlib.md5(('*/' + str(password) + '/*').encode()).hexdigest()}
+    payload = {'id': str(id), 'password': str(password)}
     response = requests.post(url, json=payload, verify=False)
     response = response.json()
     if response["response"] == 'OK':
