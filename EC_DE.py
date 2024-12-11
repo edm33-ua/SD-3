@@ -522,12 +522,6 @@ def authenticate(reauth=False):
     finally: 
         client.close()
 
-def tempAuthenticate():
-    #   Función eliminable
-    global authenticated
-    print("--------AUTENTICO EL TAXI")
-    authenticated = True
-
 ##########  REGISTRY METHODS  ##########
 # DESCRIPTION: Da de baja al taxi, pasandole la id y password por parámetro
 # STARTING_VALUES: id del taxi, y la contraseña

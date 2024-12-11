@@ -831,7 +831,10 @@ def authenticate(conn, addr):
             conn.close()
             break
 
-
+# DESCRIPTION: Método que genera y almacena en memoria el token y el certificado para la sesión del taxi
+# STARTING_VALUES: ID del taxi que va a iniciar sesión
+# RETURNS: NONE
+# NEEDS: NONE
 def updateSessions(taxiID):
     global taxiSessions
     try:
@@ -847,8 +850,6 @@ def updateSessions(taxiID):
         print(f"[SESSION MANAGER] THERE HAS BEEN AN ERROR ON ACTIVE SESSIONS REGISTRY FOR {taxiID}. {e}")
 
     return token, certificate
-
-
 
 # DESCRIPTION: Este método lo que hace es esperar alguna petición de algun taxi para la conexión,
 # y en caso de recibirlo, abre un nuevo hilo con la conexión de ese socket
