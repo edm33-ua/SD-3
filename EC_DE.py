@@ -21,7 +21,6 @@ ACK = "ACK".encode(FORMAT)
 OK = "OK".encode(FORMAT)
 KO = "KO".encode(FORMAT)
 SECONDS = 10
-REGISTRYIP = '127.0.0.1'
 APIPORT = '5000'
 #MAP_CONF_FILENAME = "./conf/cityconf.txt"
 
@@ -524,7 +523,7 @@ def leave(id, password):
     url = 'https://' + REGISTRYIP + ':' + APIPORT + '/deleteTaxi'
     payload = {'id': str(id), 'password': hashlib.md5(('*/' + str(password) + '/*').encode()).hexdigest()}
     response = requests.post(url, json=payload, verify=False)
-    response = response.json
+    response = response.json()
     if response["response"] == 'OK':
         registered = False
         return 1
@@ -542,7 +541,7 @@ def register(id, password):
     url = 'https://' + REGISTRYIP + ':' + APIPORT + '/addTaxi'
     payload = {'id': str(id), 'password': hashlib.md5(('*/' + str(password) + '/*').encode()).hexdigest()}
     response = requests.post(url, json=payload, verify=False)
-    response = response.json
+    response = response.json()
     if response["response"] == 'OK':
         registered = True
         return 1
@@ -754,6 +753,7 @@ if (len(sys.argv) == 8):
     ADDR = (SERVER, PORT)
     EC_CENTRAL_ADDR = (EC_CENTRAL_IP, EC_CENTRAL_PORT)
     BROKER_ADDR = (BROKER_IP, BROKER_PORT)
+    REGISTRYIP = sys.argv[1]
     
 
     x = y = 0
