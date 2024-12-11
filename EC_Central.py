@@ -668,6 +668,56 @@ def checkClientConnections():
             
 ############ TAXI COMMUNICATION ############
 
+# DESCRIPTION: Este método recibe el ID de un taxi y obtiene, si existe,
+# el token asociado a la sesión actual de dicho taxi.
+# STARTING_VALUES: ID del taxi cuyo token se desea obtener
+# RETURNS: Token de la sesión del taxi o False si no se ha encontrado
+# NEEDS: NONE
+def getToken(taxiID):
+    global taxiSession
+    
+    for key, item in taxiSessions.items():
+        if str(item[1]) == str(taxiID):
+            return str(key)
+    return False
+
+# DESCRIPTION: Este método recibe un mensaje y la id del taxi al que está dirigido
+# y devuelve el mensaje codificado en el formato token_mensajeCifrado, siendo este
+# mensaje codificado con el certificado simétrico asociado a la sesión del taxi
+# STARTING_VALUES: ID del taxi destino; Mensaje a codificar
+# RETURNS: mensaje codificado en el formato token_mensajeCifrado o False si no se ha encontrado el id
+# NEEDS: getToken()
+def encodeMessage(taxiID, originalMessage):
+    global taxiSession
+    taxiToken = getToken(taxiID)
+    if taxiToken:
+        certificate = taxiSessions[taxiToken]
+        f = Fernet(certificate)
+        encodedMessage = f.encrypt(originalMessage)
+        finalMessage = taxiToken + "_" + encodedMessage
+        return finalMessage
+    
+    return False
+
+# DESCRIPTION: Este método recibe un mensaje codificado en el formato token_mensajeCifrado y devuelve el
+# mensaje descifrado con el certificado simétrico asociado a la sesión del taxi
+# STARTING_VALUES: Mensaje codificado en el formato token_mensajeCifrado
+# RETURNS: mensaje descifrado con el certificado simétrico asociado a la sesión del taxi
+# NEEDS: NONE
+def decodeMessage(message):
+    global taxiSessions
+    splitMessage = message.split("_")
+    taxiToken = splitMessage[0]
+    encryptedMessage = splitMessage[1]
+    taxiCertificate = taxiSessions[taxiToken][0]
+    f = Fernet(taxiCertificate)
+    originalMessage = f.decrypt(encryptedMessage)
+
+    return originalMessage
+    
+
+
+
 # DESCRIPTION: Este método lo que hace es enviar un string con la información del mapa a los taxis
 # STARTING_VALUES: NONE
 # RETURNS: NONE
