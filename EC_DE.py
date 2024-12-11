@@ -8,6 +8,7 @@ from tkinter import ttk
 from encodings import idna
 import copy
 import ssl
+import requests
 
 MAP_ROWS = 20
 MAP_COLUMNS = 20
@@ -18,6 +19,8 @@ ACK = "ACK".encode(FORMAT)
 OK = "OK".encode(FORMAT)
 KO = "KO".encode(FORMAT)
 SECONDS = 10
+REGISTRYIP = '127.0.0.1'
+APIPORT = '5000'
 #MAP_CONF_FILENAME = "./conf/cityconf.txt"
 
 global x, y, state, active, customerOnBoard, sensorsState, sensorsIDs
@@ -27,6 +30,10 @@ global lockState, lockActive, lockCustomerOnBoard, lockSensorsState
 global registered, authenticated
 
 global mapArray, lockMapArray, lastMapArray, lockLastMapArray
+
+##########  REGISTRY METHODS  ##########
+
+
 
 ##########  UTILITIES  ##########
 
@@ -508,7 +515,6 @@ def register():
     global registered
     print("--------REGISTRO EL TAXI")
     registered = True
-
 
 def tempAuthenticate():
     #   Función eliminable

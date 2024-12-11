@@ -19,7 +19,7 @@ MAP_COLUMNS = 20
 DATABASE = 'data/database.db'
 HEADER = 1024
 FORMAT = 'utf-8'
-TABLENAMES = ['Taxis', 'Clients']
+TABLENAMES = ['Taxis', 'Clients', 'Registry']
 LOCATION_FILE = 'EC_locations.json'
 SECONDS = 10
 
@@ -77,7 +77,7 @@ class Client:
     # Method to represent the Client when printing
     def __str__(self) -> str:
         return f"<CLIENT {self.id}: Destination:{self.destination}, State:{self.state}>"
-    
+
 ############ JSON FILE MANAGEMENT ############
 
 # DESCRIPTION: Este método lo que hace crear el diccionario interno para las localizaciones
@@ -110,6 +110,39 @@ def readJsonConfigurationFile():
         f.close()
 
 ############ DATABASE/MEMORY METHODS ############
+
+# DESCRIPTION: Este método comprueba si un taxi está en la tabla Registry, devolviendo un valor numérico en base a su estado
+# STARTING_VALUES: id del taxi, contraseña del taxi
+# RETURNS: -1, si el taxi no está en la tabla, 0 si el taxi está pero la contraseña es incorrecta, 1 si el taxi está y la contraseña
+# es correcta
+# NEEDS: NONE
+def findInRegistry(id, password):
+    try:
+        global dbLock
+        # We convert the password to its equivalent hash
+        password = hashlib.md5(('*/' + password+ '/*').encode()).hexdigest()
+        # Now we connect to the database
+        with dbLock:
+            conn = sqlite3.connect(DATABASE)
+            # We get the cursor to handle to DB connection
+            c = conn.cursor()
+            # And make sure to fetch all the entries of the DB
+            c.execute(f"SELECT * FROM Registry")
+            entries = [item for item in c.fetchall()]
+            # We declare a flag to check if the taxi exists in the DB
+            flag = False
+            for entry in entries:
+                if entry[0] == id:
+                    flag = True
+                    if entry[1] == password:
+                        return 1
+            conn.close()
+        if flag:
+            return 0
+        else:
+            return -1
+    except Exception as e:
+        print(f"[DATABASE HANDLER] THERE HAS BEEN AN ERROR WHEN TRYING TO FIND A TAXI IN THE REGISTRY TABLE. {e}")
 
 # DESCRIPTION: Este método inicia los valores de la memoria interna con los de la base de datos. Su propósito es ser capaz
 # de retomar las acciones que estaba realizando cuando la central se desconecte
@@ -325,6 +358,8 @@ def checkTablesForDB():
                               "client text, active text, mounted text, pos text)")
                 elif name == 'Clients':
                     c.execute("CREATE TABLE Clients (id text PRIMARY KEY, destination text, state text, taxi text, pos text)")
+                elif name == 'Registry':
+                    c.execute("CREATE TABLE Registry (id text PRIMARY KEY, password text NOT NULL)")
         # We commit the changes done to the database
         conn.commit()
         # Then we close the database
@@ -1326,7 +1361,6 @@ if  (len(sys.argv) == 5):
     PORT = int(sys.argv[2])
     BROKER_IP = sys.argv[3]
     BROKER_PORT = int(sys.argv[4])
-    
     # Preparing data for future uses
     ADDR = (SERVER, PORT)               # Server address 
 

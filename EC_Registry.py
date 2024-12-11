@@ -2,6 +2,7 @@ from flask import Flask, request, jsonify
 import threading
 import tkinter as tk
 import sqlite3
+import hashlib
 
 ################ PATHS/CONSTANTS  ################
 
@@ -56,7 +57,7 @@ def addTaxi():
         data = request.json
         # Then we extract the information from it
         id = data.get('id')
-        password = data.get('password')
+        password = hashlib.md5(('*/' + data.get('password') + '/*').encode()).hexdigest()
         # Now we connect to the database
         with dbLock:
             conn = sqlite3.connect(DATABASE)
@@ -97,7 +98,7 @@ def deleteTaxi():
         data = request.json
         # Then we extract the information from it
         id = data.get('id')
-        password = data.get('password')
+        password = hashlib.md5(('*/' + data.get('password') + '/*').encode()).hexdigest()
         # Now we connect to the database
         with dbLock:
             conn = sqlite3.connect(DATABASE)
