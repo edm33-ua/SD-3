@@ -133,6 +133,6 @@ if __name__ == '__main__':
     checkRegistryTableDB()
     # We begin running the application
     try:
-        app.run(port=5000, ssl_context=(Certificate, Key))
+        app.run(port=5000, ssl_context=(Certificate, Key), host='0.0.0.0')
     except Exception as e:
         print(f'[APPLICATION HANDLER] THERE HAS BEEN AN ERROR WHILE HANDLING THE APPLICATION. {e}')

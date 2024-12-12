@@ -147,7 +147,7 @@ if __name__ == '__main__':
 
     # We begin running the API
     try:
-        app.run()
+        app.run(host='0.0.0.0')
     except KeyboardInterrupt:
         print(f"[APP HANDLER] APPLICATION ENDED DUE TO HUMAN INTERACTION")
     except Exception as e:
