@@ -11,6 +11,7 @@ import copy
 import ssl
 import requests
 import hashlib
+from cryptography.fernet import Fernet
 
 MAP_ROWS = 20
 MAP_COLUMNS = 20
@@ -49,6 +50,38 @@ def decipherPos(pos):
 #
 def calcLocation(posX, posY):
     return posY * MAP_COLUMNS + posX
+
+# DESCRIPTION: Este método recibe un mensaje y devuelve el mensaje codificado en el formato
+# token_mensajeCifrado, empleando el token y la clave asociado a la sesión del taxi actual
+# STARTING_VALUES: Mensaje a codificar
+# RETURNS: mensaje codificado en el formato token_mensajeCifrado
+# NEEDS: NONE
+def encodeMessage(originalMessage):
+    global token, certificate
+    if token:
+        f = Fernet(certificate)
+        encodedMessage = f.encrypt(originalMessage)
+        finalMessage = token + "_" + encodedMessage
+        return finalMessage
+    
+    return False
+
+# DESCRIPTION: Este método recibe un mensaje codificado en el formato token_mensajeCifrado y, si está dirigido a este taxi,
+#  devuelve el mensaje descifrado con el certificado simétrico asociado a la sesión del taxi
+# STARTING_VALUES: Mensaje codificado en el formato token_mensajeCifrado
+# RETURNS: mensaje descifrado con el certificado simétrico asociado a la sesión del taxi o False si no va dirigido a este taxi
+# NEEDS: NONE
+def decodeIfForMe(message):
+    global token, certificate
+    splitMessage = message.split("_")
+    destToken = splitMessage[0]
+    encryptedMessage = splitMessage[1]
+    if destToken == token:
+        f = Fernet(certificate)
+        originalMessage = f.decrypt(encryptedMessage)
+        return originalMessage
+    return False
+
 
 ##########  COMMUNICATION WITH CENTRAL  ##########
 
