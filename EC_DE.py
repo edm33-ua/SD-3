@@ -11,6 +11,7 @@ import copy
 import ssl
 import requests
 import hashlib
+from cryptography.fernet import Fernet
 
 MAP_ROWS = 20
 MAP_COLUMNS = 20
@@ -30,6 +31,9 @@ global lockState, lockActive, lockCustomerOnBoard, lockSensorsState
 
 global registered, authenticated
 
+# Token y certificado de la sesión actual  (False si no está autenticado)
+global token, certificate
+
 global mapArray, lockMapArray, lastMapArray, lockLastMapArray
 
 ##########  UTILITIES  ##########
@@ -47,6 +51,38 @@ def decipherPos(pos):
 def calcLocation(posX, posY):
     return posY * MAP_COLUMNS + posX
 
+# DESCRIPTION: Este método recibe un mensaje y devuelve el mensaje codificado en el formato
+# token_mensajeCifrado, empleando el token y la clave asociado a la sesión del taxi actual
+# STARTING_VALUES: Mensaje a codificar
+# RETURNS: mensaje codificado en el formato token_mensajeCifrado
+# NEEDS: NONE
+def encodeMessage(originalMessage):
+    global token, certificate
+    if token:
+        f = Fernet(certificate)
+        encodedMessage = f.encrypt(originalMessage)
+        finalMessage = token + "_" + encodedMessage
+        return finalMessage
+    
+    return False
+
+# DESCRIPTION: Este método recibe un mensaje codificado en el formato token_mensajeCifrado y, si está dirigido a este taxi,
+#  devuelve el mensaje descifrado con el certificado simétrico asociado a la sesión del taxi
+# STARTING_VALUES: Mensaje codificado en el formato token_mensajeCifrado
+# RETURNS: mensaje descifrado con el certificado simétrico asociado a la sesión del taxi o False si no va dirigido a este taxi
+# NEEDS: NONE
+def decodeIfForMe(message):
+    global token, certificate
+    splitMessage = message.split("_")
+    destToken = splitMessage[0]
+    encryptedMessage = splitMessage[1]
+    if destToken == token:
+        f = Fernet(certificate)
+        originalMessage = f.decrypt(encryptedMessage)
+        return originalMessage
+    return False
+
+
 ##########  COMMUNICATION WITH CENTRAL  ##########
 
 # DESCRIPTION: Envía a la central el estado del taxi (posición, estado, activo y cliente montado) cada segundo
@@ -54,46 +90,47 @@ def calcLocation(posX, posY):
 # RETURNS: NONE
 # NEEDS: waitForACK()
 def sendState():
-    global customerOnBoard, x, y, active, state, lockState, lockActive, lockCustomerOnBoard
+    global customerOnBoard, x, y, active, state, lockState, lockActive, lockCustomerOnBoard, authenticated
     producer = None
     try:
         # Kafka producer
         producer = KafkaProducer(bootstrap_servers=str(BROKER_IP) + ':' + str(BROKER_PORT))
         while True:
-            tempState = ""
-            user = ""
-            tempActive = ""
-            print("hasta aquí 1")
-            lockState.acquire()
-            if state:
-                tempState = "OK"
-            else:
-                tempState = "KO"
-            lockState.release()
-            print("hasta aquí 2")
-            lockActive.acquire()
-            if active:
-                tempActive = "Y"
-            else:
-                tempActive = "N"
-            lockActive.release()
-            print("hasta aquí 3")
-            lockCustomerOnBoard.acquire()
-            if customerOnBoard:
-                user = "Y"
-            else: 
-                user = "N"
-            lockCustomerOnBoard.release()
-            location = calcLocation(x, y)
-            print("State not sent yet")
-            producer.send("DE2CentralState", ( ID + "_" + str(location).zfill(3) + "_" + tempState + "_" + tempActive + "_" + user).encode(FORMAT))
-            print("[SEND STATE]" + ID + "_" + str(location).zfill(3) + "_" + tempState + "_" + tempActive + "_" + user)
-            # Start background process to wait for an answer from Central Control
-            time.sleep(0.5)
-            ackThread = threading.Thread(target=waitForACK)
-            ackThread.daemon=True
-            ackThread.start()
-            time.sleep(0.5)
+            if authenticated:
+                tempState = ""
+                user = ""
+                tempActive = ""
+                print("hasta aquí 1")
+                lockState.acquire()
+                if state:
+                    tempState = "OK"
+                else:
+                    tempState = "KO"
+                lockState.release()
+                print("hasta aquí 2")
+                lockActive.acquire()
+                if active:
+                    tempActive = "Y"
+                else:
+                    tempActive = "N"
+                lockActive.release()
+                print("hasta aquí 3")
+                lockCustomerOnBoard.acquire()
+                if customerOnBoard:
+                    user = "Y"
+                else: 
+                    user = "N"
+                lockCustomerOnBoard.release()
+                location = calcLocation(x, y)
+                print("State not sent yet")
+                producer.send("DE2CentralState", ( ID + "_" + str(location).zfill(3) + "_" + tempState + "_" + tempActive + "_" + user).encode(FORMAT))
+                print("[SEND STATE]" + ID + "_" + str(location).zfill(3) + "_" + tempState + "_" + tempActive + "_" + user)
+                # Start background process to wait for an answer from Central Control
+                time.sleep(0.5)
+                ackThread = threading.Thread(target=waitForACK)
+                ackThread.daemon=True
+                ackThread.start()
+                time.sleep(0.5)
           
     # Manage any exception ocurred
     except KeyboardInterrupt:
@@ -460,10 +497,11 @@ def checkSensors():
 
 # Connection through Sockets
 # DESCRIPTION: Sends a message to the Central Control with the taxi ID and waits for it to answer with OK or KO
-# STARTING_VALUES: EC_CENTRAL_ADDR [IP:Puerto de la central]
+# STARTING_VALUES: NONE
 # RETURNS: True [si se ha realizado correctamente]; False si ha habido algún problema
 # NEEDS: NONE
-def authenticate(EC_CENTRAL_ADDR):
+def authenticate(reauth=False):
+    global token, certificate
     context = ssl.SSLContext(ssl.PROTOCOL_TLSv1)
 
     conn = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -476,7 +514,12 @@ def authenticate(EC_CENTRAL_ADDR):
         print(EC_CENTRAL_ADDR)
         client.connect((EC_CENTRAL_ADDR[0], int(EC_CENTRAL_ADDR[1])))
         print(f"[AUTHENTICATION PROCESS]: Sending Taxi ID: {ID}")
-        client.send(ID.encode(FORMAT))
+        message = str(ID) + "_" + str(PASSWD)
+        if reauth:
+            message = message + "_reauth"
+        else:
+            message = message + "_auth"
+        client.send(message.encode(FORMAT))
     except ConnectionError:
         print(f"[AUTHENTICATION PROCESS]: Unable to find CENTRAL CONTROL SERVER on {EC_CENTRAL_ADDR}")
         client.close()
@@ -485,19 +528,24 @@ def authenticate(EC_CENTRAL_ADDR):
 
     try:
         while True:
-            answer = client.recv(HEADER).decode(FORMAT)
+            receivedMessage = client.recv(HEADER).decode(FORMAT)
+            splitMessage = receivedMessage.split("_")
+            answer = splitMessage[0]
+
             if answer:
                 if answer == "OK":
                     print(f"[AUTHENTICATION PROCESS]: Authenticated sucessfully")
+                    token = splitMessage[1]
+                    certificate = splitMessage[2]
                     client.close()
                     return True
                       
                 elif answer == "KO":
-                    print(f"[AUTHENTICATION PROCESS]: Authenticated failed")
+                    print(f"[AUTHENTICATION PROCESS]: Authentication failed")
                     client.close()  
                     return False
                 else:
-                    print(f"[AUTHENTICATION PROCESS]: Error 'message not understood'")
+                    print(f"[AUTHENTICATION PROCESS]: ERROR: MESSAGE NOT UNDERSTOOD")
                     client.close() 
                     return False
     except ConnectionError:
@@ -506,12 +554,6 @@ def authenticate(EC_CENTRAL_ADDR):
         print(f"[AUTHENTICATION PROCESS] SOMETHING WENT WRONG: {e}")
     finally: 
         client.close()
-
-def tempAuthenticate():
-    #   Función eliminable
-    global authenticated
-    print("--------AUTENTICO EL TAXI")
-    authenticated = True
 
 ##########  REGISTRY METHODS  ##########
 # DESCRIPTION: Da de baja al taxi, pasandole la id y password por parámetro
@@ -540,8 +582,11 @@ def register(id, password):
     global registered
     url = 'https://' + REGISTRYIP + ':' + APIPORT + '/addTaxi'
     payload = {'id': str(id), 'password': str(password)}
+    print("eyeye1")
     response = requests.post(url, json=payload, verify=False)
+    print("eyeye2")
     response = response.json()
+    print("eyeye3")
     if response["response"] == 'OK':
         registered = True
         return 1
@@ -565,7 +610,6 @@ def receiveMapState(mapButtons):
                 decodedMessage = message.value.decode(FORMAT)
                 # print(f"Mapa recibido: {decodedMessage}")
                 translateMapMessage(decodedMessage)
-                print("Traducido!")
                 updateMap(mapButtons)
             
                 
@@ -587,8 +631,6 @@ def translateMapMessage(mapMessage):
     # Deep copy of the map array
     lastMapArray = copy.deepcopy(mapArray)
     mapArray = str(mapMessage).split(",")
-    print(lastMapArray)
-    print(mapArray)
     lockMapArray.release()
     lockLastMapArray.release()
 
@@ -707,10 +749,10 @@ def createGUI(mainFrame):
         optionsFrame.grid(row=1, column=0, sticky=(tk.W, tk.E))
 
         # Opciones del menú
-        registerButton = ttk.Button(optionsFrame, text="REGISTRAR", command=lambda: register())
+        registerButton = ttk.Button(optionsFrame, text="REGISTRAR", command=lambda: register(ID, PASSWD))
         registerButton.pack(side=tk.BOTTOM, padx=5)
 
-        authenticateButton = ttk.Button(optionsFrame, text="AUTENTICAR", command=lambda: tempAuthenticate())
+        authenticateButton = ttk.Button(optionsFrame, text="AUTENTICAR", command=lambda: authenticate())
         authenticateButton.pack(side=tk.BOTTOM, padx=5)
 
         # MAPA
@@ -740,15 +782,16 @@ def createGUI(mainFrame):
 
 ########## STARTING POINT OF MAIN APPLICATION ##########
 
-if (len(sys.argv) == 8):
+if (len(sys.argv) == 9):
     # Argument management
     EC_CENTRAL_IP = sys.argv[1]
     EC_CENTRAL_PORT = int(sys.argv[2])
     BROKER_IP = sys.argv[3]
     BROKER_PORT = int(sys.argv[4])
     ID = str(sys.argv[5]).zfill(2)
-    SERVER = sys.argv[6]
-    PORT = int(sys.argv[7])
+    PASSWD = str(sys.argv[6])
+    SERVER = sys.argv[7]
+    PORT = int(sys.argv[8])
     # Preparing data for future uses
     ADDR = (SERVER, PORT)
     EC_CENTRAL_ADDR = (EC_CENTRAL_IP, EC_CENTRAL_PORT)
@@ -757,6 +800,8 @@ if (len(sys.argv) == 8):
     
 
     x = y = 0
+    token = False
+    certificate = False
     active = False
     state = True
     customerOnBoard = False
@@ -789,34 +834,31 @@ if (len(sys.argv) == 8):
         
         root.after(1000, lambda: updateInfoGUI(infoLabel, root))
 
-        if authenticate(EC_CENTRAL_ADDR):
-            ## Creating a thread for Sensor Server ##
-            sensorThread = threading.Thread(target=startSensorServer)
-            sensorThread.daemon = True
-            sensorThread.start()
-            ## Creating a thread for Checking the state of all sensors ##
-            checkState = threading.Thread(target=checkSensors)
-            checkState.daemon = True
-            checkState.start()
-            ## Creating a thread for sending periodically the state of the taxi ##
-            sendStateThread = threading.Thread(target=sendState)
-            sendStateThread.daemon = True
-            sendStateThread.start()
+        ## Creating a thread for Sensor Server ##
+        sensorThread = threading.Thread(target=startSensorServer)
+        sensorThread.daemon = True
+        sensorThread.start()
+        ## Creating a thread for Checking the state of all sensors ##
+        checkState = threading.Thread(target=checkSensors)
+        checkState.daemon = True
+        checkState.start()
+        ## Creating a thread for sending periodically the state of the taxi ##
+        sendStateThread = threading.Thread(target=sendState)
+        sendStateThread.daemon = True
+        sendStateThread.start()
 
-            ## Creating a thread for receiving orders from Central Control ##
-            receiveInstructionsThread = threading.Thread(target=receiveInstructions)
-            receiveInstructionsThread.daemon = True
-            receiveInstructionsThread.start()
-            
-            ## Creating a thread for receiving orders from Central Control ##
-            receiveMapStateThread = threading.Thread(target=receiveMapState, args=(mapButtons, ))
-            receiveMapStateThread.daemon = True
-            receiveMapStateThread.start()
+        ## Creating a thread for receiving orders from Central Control ##
+        receiveInstructionsThread = threading.Thread(target=receiveInstructions)
+        receiveInstructionsThread.daemon = True
+        receiveInstructionsThread.start()
+        
+        ## Creating a thread for receiving orders from Central Control ##
+        receiveMapStateThread = threading.Thread(target=receiveMapState, args=(mapButtons, ))
+        receiveMapStateThread.daemon = True
+        receiveMapStateThread.start()
 
             
-            root.mainloop()
-            # while True:
-            #     pass
+        root.mainloop()
         
         # Printing exit message
         print("[DIGITAL ENGINE] Execution finished. Exiting application")
@@ -829,4 +871,4 @@ if (len(sys.argv) == 8):
         print(f'EXITING DIGITAL ENGINE APPLICATION')
 
 else:
-    print("SORRY, INCORRECT PARAMETER USE. \nUSAGE: <EC_CENTRAL IP> <EC_CENTRAL PORT> <BROKER IP> <BROKER PORT> <TAXI ID> <LISTENING_IP_SENSORS> <LISTENING_PORT_SENSORS>")
+    print("SORRY, INCORRECT PARAMETER USE. \nUSAGE: <EC_CENTRAL IP> <EC_CENTRAL PORT> <BROKER IP> <BROKER PORT> <TAXI ID> <PASSWORD> <LISTENING_IP_SENSORS> <LISTENING_PORT_SENSORS>")

@@ -12,6 +12,9 @@ import tkinter as tk
 from tkinter import ttk
 import encodings.idna
 import ssl
+from secrets import token_hex
+from cryptography.fernet import Fernet
+import hashlib
 
 # SERVER = "172.21.242.82"
 MAP_ROWS = 20
@@ -27,6 +30,8 @@ global dbLock, internalMemory, memLock, locationDictionary, locLock, clientMapLo
 global connDictionary, connDicLock
 global taxiTableGlobal, selectedTaxi, selectedPos
 global clientConnections, clientConnectionsLock
+
+global taxiSessions
 
 ############ LOCAL CLASSES ############
 
@@ -663,6 +668,56 @@ def checkClientConnections():
             
 ############ TAXI COMMUNICATION ############
 
+# DESCRIPTION: Este método recibe el ID de un taxi y obtiene, si existe,
+# el token asociado a la sesión actual de dicho taxi.
+# STARTING_VALUES: ID del taxi cuyo token se desea obtener
+# RETURNS: Token de la sesión del taxi o False si no se ha encontrado
+# NEEDS: NONE
+def getToken(taxiID):
+    global taxiSession
+    
+    for key, item in taxiSessions.items():
+        if str(item[1]) == str(taxiID):
+            return str(key)
+    return False
+
+# DESCRIPTION: Este método recibe un mensaje y la id del taxi al que está dirigido
+# y devuelve el mensaje codificado en el formato token_mensajeCifrado, siendo este
+# mensaje codificado con el certificado simétrico asociado a la sesión del taxi
+# STARTING_VALUES: ID del taxi destino; Mensaje a codificar
+# RETURNS: mensaje codificado en el formato token_mensajeCifrado o False si no se ha encontrado el id
+# NEEDS: getToken()
+def encodeMessage(taxiID, originalMessage):
+    global taxiSession
+    taxiToken = getToken(taxiID)
+    if taxiToken:
+        certificate = taxiSessions[taxiToken]
+        f = Fernet(certificate)
+        encodedMessage = f.encrypt(originalMessage)
+        finalMessage = taxiToken + "_" + encodedMessage
+        return finalMessage
+    
+    return False
+
+# DESCRIPTION: Este método recibe un mensaje codificado en el formato token_mensajeCifrado y devuelve el
+# mensaje descifrado con el certificado simétrico asociado a la sesión del taxi
+# STARTING_VALUES: Mensaje codificado en el formato token_mensajeCifrado
+# RETURNS: mensaje descifrado con el certificado simétrico asociado a la sesión del taxi
+# NEEDS: NONE
+def decodeMessage(message):
+    global taxiSessions
+    splitMessage = message.split("_")
+    taxiToken = splitMessage[0]
+    encryptedMessage = splitMessage[1]
+    taxiCertificate = taxiSessions[taxiToken][0]
+    f = Fernet(taxiCertificate)
+    originalMessage = f.decrypt(encryptedMessage)
+
+    return originalMessage
+    
+
+
+
 # DESCRIPTION: Este método lo que hace es enviar un string con la información del mapa a los taxis
 # STARTING_VALUES: NONE
 # RETURNS: NONE
@@ -738,32 +793,56 @@ def sendMapToTaxis():
 # NEEDS: findID()
 def authenticate(conn, addr):
     global internalMemory, memLock, connDictionary, connDicLock
+    authenticationOK = False
 
     conn.settimeout(5)
     print(f"[TAXI AUTHENTICATION SERVICE]: Stablished connection with taxi on {addr}")                  
     while True:
         try:
-            taxiId = conn.recv(HEADER).decode(FORMAT)
-            if taxiId:  
-                print(f"[TAXI AUTHENTICATION SERVICE]: Starting taxi authentication for TAXI {taxiId}")                    
-                found = findTaxiID(taxiId)
-                if not found:
-                    conn.send("OK".encode(FORMAT))
-                    print(f"[TAXI AUTHENTICATION SERVICE]: TAXI {taxiId} authentication completed")
-                    # And add it to the internal memory (dictionary)
-                    memLock.acquire()
-                    newValue = Taxi(taxiId, 'OK', 'N', 'N', '-', 'N', '000')
-                    internalMemory.update({taxiId: newValue})
-                    memLock.release()
-                    # As well as creating its disconnection counter
-                    connDicLock.acquire()
-                    connDictionary.update({newValue.id: 0})
-                    connDicLock.release()
-                    break
-                else:
-                    conn.send("KO".encode(FORMAT))
-                    print(f"[TAXI AUTHENTICATION SERVICE]: TAXI {taxiId} failed")
-                    break
+            # Receive taxi information (Format: id_password_auth/reauth)
+            taxiInfo = conn.recv(HEADER).decode(FORMAT)
+            # Prepare taxi information for future use
+            processedInfo = taxiInfo.split("_")
+            taxiId = processedInfo[0]
+            passwd = processedInfo[1]
+            authType = processedInfo[2]
+            
+            print(f"[TAXI AUTHENTICATION SERVICE]: Received taxi authentication information for taxi {taxiId}")
+
+            # If taxi is asking for a new session
+            if authType == "auth":
+                # Check if taxi is registered
+                if findInRegistry(taxiId, passwd):
+                    # Check if the taxi has an active session
+                    if not findTaxiID(taxiId):
+                        authenticationOK = True
+                        # And add it to the internal memory (dictionary)
+                        memLock.acquire()
+                        newValue = Taxi(taxiId, 'OK', 'N', 'N', '-', 'N', '000')
+                        internalMemory.update({taxiId: newValue})
+                        memLock.release()
+                        # As well as creating its disconnection counter
+                        connDicLock.acquire()
+                        connDictionary.update({newValue.id: 0})
+                        connDicLock.release()
+
+            # If taxi is asking for recovering a lost session
+            else:           # (reauth)
+                # Check if the taxi has an active session
+                if findTaxiID(taxiId):
+                    authenticationOK = True
+
+            # If the taxi accomplishes the requirements for starting a session
+            if authenticationOK:
+                token, certificate = updateSessions()
+                message = "OK_" + str(token) + "_" + str(certificate)
+
+                conn.send(message.encode(FORMAT))
+                print(f"[TAXI AUTHENTICATION SERVICE]: Completed authentication process for {taxiId}")
+
+            else:
+                conn.send("KO".encode(FORMAT))
+                print(f"[TAXI AUTHENTICATION SERVICE]: Taxi authentication rejected for taxi {taxiId}")
                 
         except socket.timeout:
             print("[TAXI AUTHENTICATION SERVICE]: LOST connection with taxi")
@@ -774,6 +853,26 @@ def authenticate(conn, addr):
             print(f"[TAXI AUTHENTICATION SERVICE]: THERE HAS BEEN AN ERROR ON AUTHENTICATION OF {addr}. {e}")
             conn.close()
             break
+
+# DESCRIPTION: Método que genera y almacena en memoria el token y el certificado para la sesión del taxi
+# STARTING_VALUES: ID del taxi que va a iniciar sesión
+# RETURNS: NONE
+# NEEDS: NONE
+def updateSessions(taxiID):
+    global taxiSessions
+    try:
+        token = token_hex(16)
+        certificate = Fernet.generate_key()
+        print(f"[SESSION MANAGER] Generated session token and certificate for {taxiID}")
+    except Exception as e:
+        print(f"[SESSION MANAGER] THERE HAS BEEN AN ERROR ON TOKEN OR CERTIFICATE CREATION FOR TAXI {taxiID}. {e}")
+    try:
+        taxiSessions[token] = (certificate, taxiID)
+        print(f"[SESSION MANAGER] Stored session token and certificate for {taxiID}")
+    except Exception as e:
+        print(f"[SESSION MANAGER] THERE HAS BEEN AN ERROR ON ACTIVE SESSIONS REGISTRY FOR {taxiID}. {e}")
+
+    return token, certificate
 
 # DESCRIPTION: Este método lo que hace es esperar alguna petición de algun taxi para la conexión,
 # y en caso de recibirlo, abre un nuevo hilo con la conexión de ese socket
@@ -1373,6 +1472,7 @@ if  (len(sys.argv) == 5):
     clientMapLocation = {}
     connDictionary = {}
     clientConnections = {}
+    taxiSessions = {}               # Dictitonary for active taxi sessions
     # We initialize the semaphores used
     dbLock = threading.Lock()
     memLock = threading.Lock()
