@@ -697,6 +697,7 @@ def encodeMessage(taxiID, originalMessage):
             # print(originalMessage)
             encodedMessage = f.encrypt(originalMessage.encode(FORMAT))
             finalMessage = taxiToken + "|" + encodedMessage.decode(FORMAT)
+            print(f"[MESSAGE ENCODER] Message '{originalMessage}' encoded correctly")
             return finalMessage.encode(FORMAT)
         
         return False
@@ -725,6 +726,7 @@ def decodeMessage(message):
             # print(f"Taxi certificate used for decoding: {taxiCertificate}")
             # print(f"Mensaje a desencriptar: {encryptedMessage}")
             originalMessage = f.decrypt(encryptedMessage.encode(FORMAT))
+            print(f"[MESSAGE DECODER] Message '{originalMessage}' decoded correctly")
             # print(originalMessage.decode(FORMAT))
             return originalMessage.decode(FORMAT)
     

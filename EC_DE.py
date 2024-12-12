@@ -63,8 +63,8 @@ def encodeMessage(originalMessage):
             f = Fernet(certificate)
             encodedMessage = f.encrypt(originalMessage.encode(FORMAT)).decode(FORMAT)
             finalMessage = f"{token}|{encodedMessage}"
-            print(f"Mensaje codificado con el certificado: {certificate}")
-            print(f"[MESSAGE ENCODER] Message encoded correctly")
+            # print(f"Mensaje codificado con el certificado: {certificate}")
+            print(f"[MESSAGE ENCODER] Message '{originalMessage}' encoded correctly")
             return finalMessage.encode(FORMAT)
         return False
     except Exception as e:
@@ -85,13 +85,13 @@ def decodeIfForMe(message):
         encryptedMessage = splitMessage[1].encode(FORMAT)
         if destToken == token:
             f = Fernet(certificate)
-            print("----> MENSAJE:")
-            print(encryptedMessage)
-            print(certificate)
+            # print("----> MENSAJE:")
+            # print(encryptedMessage)
+            # print(certificate)
             originalMessage = f.decrypt(encryptedMessage)
-            print(f"[MESSAGE DECODER] Message decoded correctly")
-            print("El mensaje original era:")
-            print(originalMessage)
+            print(f"[MESSAGE DECODER] Message '{originalMessage}' decoded correctly")
+            # print("El mensaje original era:")
+            # print(originalMessage)
             return originalMessage
         print("-.-.-.-.-.-.-.- El mensaje no era para mí")
         return False
