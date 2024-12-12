@@ -689,35 +689,49 @@ def getToken(taxiID):
 # NEEDS: getToken()
 def encodeMessage(taxiID, originalMessage):
     global taxiSession
-    taxiToken = getToken(taxiID)
-    if taxiToken:
-        certificate = taxiSessions[taxiToken]
-        f = Fernet(certificate)
-        encodedMessage = f.encrypt(originalMessage)
-        finalMessage = taxiToken + "_" + encodedMessage
-        return finalMessage
-    
-    return False
+    try:    
+        taxiToken = getToken(taxiID)
+        if taxiToken:
+            certificate = taxiSessions[taxiToken][0]
+            f = Fernet(certificate)
+            # print(originalMessage)
+            encodedMessage = f.encrypt(originalMessage.encode(FORMAT))
+            finalMessage = taxiToken + "|" + encodedMessage.decode(FORMAT)
+            return finalMessage.encode(FORMAT)
+        
+        return False
+    except Exception as e:
+        print(f"[MESSAGE ENCODER] THERE HAS BEEN AN ERROR ENCODING THE MESSAGE. {e}")
+        return False
 
 # DESCRIPTION: Este método recibe un mensaje codificado en el formato token_mensajeCifrado y devuelve el
 # mensaje descifrado con el certificado simétrico asociado a la sesión del taxi
-# STARTING_VALUES: Mensaje codificado en el formato token_mensajeCifrado
+# STARTING_VALUES: Mensaje codificado en el formato token_mensajeCifrado (como cadena de caracteres)
 # RETURNS: mensaje descifrado con el certificado simétrico asociado a la sesión del taxi
 # NEEDS: NONE
 def decodeMessage(message):
     global taxiSessions
-    splitMessage = message.split("_")
-    taxiToken = splitMessage[0]
-    encryptedMessage = splitMessage[1]
-    taxiCertificate = taxiSessions[taxiToken][0]
-    f = Fernet(taxiCertificate)
-    originalMessage = f.decrypt(encryptedMessage)
-
-    return originalMessage
+    try:
+        splitMessage = message.split("|")
+        # print("-------> MENSAJE RECIBIDO: " + message)
+        taxiToken = splitMessage[0]
+        encryptedMessage = splitMessage[1]
+        taxiInfo = taxiSessions[taxiToken]
+        if taxiInfo:
+            taxiCertificate = taxiInfo[0]
+            print("CERTIFICADO:")
+            print(taxiCertificate)
+            f = Fernet(taxiCertificate)
+            # print(f"Taxi certificate used for decoding: {taxiCertificate}")
+            # print(f"Mensaje a desencriptar: {encryptedMessage}")
+            originalMessage = f.decrypt(encryptedMessage.encode(FORMAT))
+            # print(originalMessage.decode(FORMAT))
+            return originalMessage.decode(FORMAT)
     
-
-
-
+    except Exception as e:
+        print(f"[MESSAGE DECODER] THERE HAS BEEN AN ERROR DECODING THE MESSAGE. {e}")
+        return False
+    
 # DESCRIPTION: Este método lo que hace es enviar un string con la información del mapa a los taxis
 # STARTING_VALUES: NONE
 # RETURNS: NONE
@@ -834,15 +848,20 @@ def authenticate(conn, addr):
 
             # If the taxi accomplishes the requirements for starting a session
             if authenticationOK:
-                token, certificate = updateSessions()
-                message = "OK_" + str(token) + "_" + str(certificate)
+                token, certificate = updateSessions(taxiId)
+                message = f"OK|{token}|{certificate.decode(FORMAT)}"        # Convertimos la clave en una cadena de caracteres
+                print(f"------------------> BORRAR: CLAVE GENERADA = {certificate}")
+                # message = ("OK_" + str(token) + "_").encode(FORMAT)
+                # message = message + certificate
 
                 conn.send(message.encode(FORMAT))
                 print(f"[TAXI AUTHENTICATION SERVICE]: Completed authentication process for {taxiId}")
+                break
 
             else:
                 conn.send("KO".encode(FORMAT))
                 print(f"[TAXI AUTHENTICATION SERVICE]: Taxi authentication rejected for taxi {taxiId}")
+                break
                 
         except socket.timeout:
             print("[TAXI AUTHENTICATION SERVICE]: LOST connection with taxi")
@@ -921,14 +940,17 @@ def hearTaxiStates():
         for message in consumer:
             # We decode the message and extract its information
             # <TAXIID>_<LOCATION>_<STATE>_<ACTIVE>_<MOUNTED>
-            decodedMessage = message.value.decode(FORMAT)
+            extractedMessage = message.value.decode(FORMAT)
+            decodedMessage = decodeMessage(extractedMessage)
             taxiID = decodedMessage[0:2]
             location = decodedMessage[3:6]
             state = decodedMessage[7:9]
             active = decodedMessage[10:11]
             mounted = decodedMessage[12:]
             # We then create a thread that after a second, will send the ACK through kafka
-            threading.Timer(1, lambda: producer.send('Central2DEACK', ("ACK_" + taxiID).encode(FORMAT))).start()
+            message = ("ACK_" + taxiID)
+            encodedMessage = encodeMessage(taxiID, message)
+            threading.Timer(1, lambda: producer.send('Central2DEACK', encodedMessage)).start()
             # Then we update the internalMemory (dictionary) for the taxi, first creating a new Taxi entity
             memLock.acquire()
             oldValue = internalMemory[taxiID]
@@ -1167,6 +1189,9 @@ def goLocation():
     taxiID = selectedTaxi
     pos = selectedPos
     sendTaxiToLocation(str(pos), str(taxiID))
+
+
+
 
 ############ GRAPHICAL USER INTERFACE ############ 
 

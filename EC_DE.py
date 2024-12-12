@@ -58,13 +58,18 @@ def calcLocation(posX, posY):
 # NEEDS: NONE
 def encodeMessage(originalMessage):
     global token, certificate
-    if token:
-        f = Fernet(certificate)
-        encodedMessage = f.encrypt(originalMessage)
-        finalMessage = token + "_" + encodedMessage
-        return finalMessage
-    
-    return False
+    try:
+        if token:
+            f = Fernet(certificate)
+            encodedMessage = f.encrypt(originalMessage.encode(FORMAT)).decode(FORMAT)
+            finalMessage = f"{token}|{encodedMessage}"
+            print(f"Mensaje codificado con el certificado: {certificate}")
+            print(f"[MESSAGE ENCODER] Message encoded correctly")
+            return finalMessage.encode(FORMAT)
+        return False
+    except Exception as e:
+        print(f"[MESSAGE ENCODER] THERE HAS BEEN AN ERROR ENCODING THE MESSAGE. {e}")
+        return False
 
 # DESCRIPTION: Este método recibe un mensaje codificado en el formato token_mensajeCifrado y, si está dirigido a este taxi,
 #  devuelve el mensaje descifrado con el certificado simétrico asociado a la sesión del taxi
@@ -73,15 +78,26 @@ def encodeMessage(originalMessage):
 # NEEDS: NONE
 def decodeIfForMe(message):
     global token, certificate
-    splitMessage = message.split("_")
-    destToken = splitMessage[0]
-    encryptedMessage = splitMessage[1]
-    if destToken == token:
-        f = Fernet(certificate)
-        originalMessage = f.decrypt(encryptedMessage)
-        return originalMessage
-    return False
-
+    try:
+        stringMessage = message.decode(FORMAT)
+        splitMessage = stringMessage.split("|")
+        destToken = splitMessage[0]
+        encryptedMessage = splitMessage[1].encode(FORMAT)
+        if destToken == token:
+            f = Fernet(certificate)
+            print("----> MENSAJE:")
+            print(encryptedMessage)
+            print(certificate)
+            originalMessage = f.decrypt(encryptedMessage)
+            print(f"[MESSAGE DECODER] Message decoded correctly")
+            print("El mensaje original era:")
+            print(originalMessage)
+            return originalMessage
+        print("-.-.-.-.-.-.-.- El mensaje no era para mí")
+        return False
+    except Exception as e:
+        print(f"[MESSAGE DECODER] THERE HAS BEEN AN ERROR DECODING THE MESSAGE. {e}")
+        return False
 
 ##########  COMMUNICATION WITH CENTRAL  ##########
 
@@ -123,15 +139,22 @@ def sendState():
                 lockCustomerOnBoard.release()
                 location = calcLocation(x, y)
                 print("State not sent yet")
-                producer.send("DE2CentralState", ( ID + "_" + str(location).zfill(3) + "_" + tempState + "_" + tempActive + "_" + user).encode(FORMAT))
-                print("[SEND STATE]" + ID + "_" + str(location).zfill(3) + "_" + tempState + "_" + tempActive + "_" + user)
-                # Start background process to wait for an answer from Central Control
-                time.sleep(0.5)
-                ackThread = threading.Thread(target=waitForACK)
-                ackThread.daemon=True
-                ackThread.start()
-                time.sleep(0.5)
-          
+                message = ( ID + "_" + str(location).zfill(3) + "_" + tempState + "_" + tempActive + "_" + user)
+                encodedMessage = encodeMessage(message)
+                if encodedMessage:
+                    producer.send("DE2CentralState", encodedMessage)
+                    print("[SEND STATE] Sended: " + message)
+                    # Start background process to wait for an answer from Central Control
+                    time.sleep(0.5)
+                    ackThread = threading.Thread(target=waitForACK)
+                    ackThread.daemon=True
+                    ackThread.start()
+                    time.sleep(0.5)
+                else:
+                    print("")
+            else:
+                time.sleep(1)
+                print("No autenticado!")
     # Manage any exception ocurred
     except KeyboardInterrupt:
         print(f"[SEND STATE] CORRECTLY CLOSED")
@@ -155,11 +178,13 @@ def waitForACK():
         # Kafka consumer
         ackListener = KafkaConsumer("Central2DEACK", bootstrap_servers=str(BROKER_IP)+':'+str(BROKER_PORT), consumer_timeout_ms=SECONDS*1000)
         for message in ackListener:
-            decodedMessage = message.value.decode(FORMAT)
-            print("received: "+ decodedMessage)
-            if ID in decodedMessage:
-                ok = True
-                break
+            decodedMessage = decodeIfForMe(message.value)
+            if decodedMessage:
+                decodedMessage = decodedMessage.decode(FORMAT)
+                print("received: "+ decodedMessage)
+                if ID in decodedMessage:
+                    ok = True
+                    break
         if not ok:
             print("[ALARM] LOST CONNECTION WITH CENTRAL CONTROL")
             # connected = False
@@ -501,7 +526,7 @@ def checkSensors():
 # RETURNS: True [si se ha realizado correctamente]; False si ha habido algún problema
 # NEEDS: NONE
 def authenticate(reauth=False):
-    global token, certificate
+    global token, certificate, authenticated
     context = ssl.SSLContext(ssl.PROTOCOL_TLSv1)
 
     conn = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -521,23 +546,26 @@ def authenticate(reauth=False):
             message = message + "_auth"
         client.send(message.encode(FORMAT))
     except ConnectionError:
-        print(f"[AUTHENTICATION PROCESS]: Unable to find CENTRAL CONTROL SERVER on {EC_CENTRAL_ADDR}")
+        print(f"[AUTHENTICATION PROCESS]: UNABLE TO FINDE CENTRAL CONTROL SERVER ON {EC_CENTRAL_ADDR}")
         client.close()
     except Exception as e:
-        print(f"[AUTHENTICATION PROCESS]: Error on {EC_CENTRAL_ADDR}. {e}")
+        print(f"[AUTHENTICATION PROCESS]: ERROR ON {EC_CENTRAL_ADDR}. {e}")
 
     try:
         while True:
             receivedMessage = client.recv(HEADER).decode(FORMAT)
-            splitMessage = receivedMessage.split("_")
-            answer = splitMessage[0]
-
+            print(f"--------------> BORRAR: MENSAJE RECIBIDO = {receivedMessage}")
+            splitMessage = receivedMessage.split("|")
+            answer = splitMessage[0]#.decode(FORMAT)
+            print("Answer = "+answer)
             if answer:
                 if answer == "OK":
                     print(f"[AUTHENTICATION PROCESS]: Authenticated sucessfully")
-                    token = splitMessage[1]
-                    certificate = splitMessage[2]
+                    token = splitMessage[1]#.decode(FORMAT)
+                    certificate = splitMessage[2].encode(FORMAT)
+                    print(f"--------------> BORRAR: CLAVE RECIBIDA = {certificate}")
                     client.close()
+                    authenticated = True
                     return True
                       
                 elif answer == "KO":
