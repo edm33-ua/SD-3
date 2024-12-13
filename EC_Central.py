@@ -93,7 +93,7 @@ class Client:
 # RETURNS: NONE
 # NEEDS: NONE
 def weatherManager():
-    global weatherState, weatherState2, SERVER
+    global weatherState, weatherState2
     producer = KafkaProducer(bootstrap_servers=str(BROKER_IP) + ':' + str(BROKER_PORT))
     # We define the url to call
     url = "http://" + SERVER + ":5000/getWeather"
@@ -743,7 +743,7 @@ def getToken(taxiID):
     global taxiSession
     
     for key, item in taxiSessions.items():
-        if str(item[1]) == str(taxiID):
+        if str(item) == str(taxiID):
             return str(key)
     return False
 
@@ -780,7 +780,8 @@ def encodeMessage(taxiID=False, originalMessage="", broadcastEncoding=False):
             taxiToken = getToken(str(taxiID).zfill(2))
             if taxiToken:
                 token = taxiToken
-                certificate = taxiSessions[taxiToken][0]
+                certificateFileName = f"{str(taxiID)}_{token}"
+                certificate = getCertificateFromFile(certificateFileName)
         
         if certificate:
             f = Fernet(certificate)
@@ -808,9 +809,10 @@ def decodeMessage(message):
         # print("-------> MENSAJE RECIBIDO: " + message)
         taxiToken = splitMessage[0]
         encryptedMessage = splitMessage[1]
-        taxiInfo = taxiSessions[taxiToken]
-        if taxiInfo:
-            taxiCertificate = taxiInfo[0]
+        taxiID = taxiSessions[taxiToken]
+        if taxiID:
+            certificateFileName = f"{taxiID}_{taxiToken}.cert"
+            taxiCertificate = getCertificateFromFile(certificateFileName)
             print("CERTIFICADO:")
             print(taxiCertificate)
             f = Fernet(taxiCertificate)
@@ -981,7 +983,13 @@ def updateSessions(taxiID):
     except Exception as e:
         print(f"[SESSION MANAGER] THERE HAS BEEN AN ERROR ON TOKEN OR CERTIFICATE CREATION FOR TAXI {taxiID}. {e}")
     try:
-        taxiSessions[token] = (certificate, taxiID)
+        filePath = f"{CERTIFICATE_FOLDER}/{taxiID}_{token}.cert"
+        # Create or overwrite the certificate file
+        f = open(filePath, "w")
+        f.write(certificate.decode(FORMAT))
+        f.close()
+        # Store token and taxiID relation for fast access
+        taxiSessions[token] = taxiID
         print(f"[SESSION MANAGER] Stored session token and certificate for {taxiID}")
     except Exception as e:
         print(f"[SESSION MANAGER] THERE HAS BEEN AN ERROR ON ACTIVE SESSIONS REGISTRY FOR {taxiID}. {e}")
