@@ -15,6 +15,7 @@ import ssl
 from secrets import token_hex
 from cryptography.fernet import Fernet
 import hashlib
+import requests
 
 # SERVER = "172.21.242.82"
 MAP_ROWS = 20
@@ -31,7 +32,7 @@ global dbLock, internalMemory, memLock, locationDictionary, locLock, clientMapLo
 global connDictionary, connDicLock
 global taxiTableGlobal, selectedTaxi, selectedPos
 global clientConnections, clientConnectionsLock
-
+global weatherState, weatherState2
 global taxiSessions
 
 ############ LOCAL CLASSES ############
@@ -83,6 +84,37 @@ class Client:
     # Method to represent the Client when printing
     def __str__(self) -> str:
         return f"<CLIENT {self.id}: Destination:{self.destination}, State:{self.state}>"
+
+############ CTC WEATHER CONTROL ############
+
+# DESCRIPTION: Este método lo que hace es llamar a la API de EC_CTC y comprobar su respuesta, enviando un BADWEATHER o GOODWEATHER,
+# solo al haber un cambio, por el tópico de kafka para las órdenes de los taxis
+# STARTING_VALUES: NONE
+# RETURNS: NONE
+# NEEDS: NONE
+def weatherManager():
+    global weatherState, weatherState2, SERVER
+    producer = KafkaProducer(bootstrap_servers=str(BROKER_IP) + ':' + str(BROKER_PORT))
+    # We define the url to call
+    url = "https://" + SERVER + ":5000/getWeather"
+    while True:
+        # Calls the CTC API
+        response = requests.get(url).json()
+        # Disects the response
+        if response["response"] == 'OK':
+            weatherState2 = 'GOOD'
+        elif response["response"] == 'KO':
+            weatherState2 = 'BAD'
+        if weatherState != weatherState2:
+            if weatherState2 == 'GOOD':
+                # Enviar el GOODWEATHER
+                producer.send()
+            else:
+                # Enviar el BADWEATHER
+                producer.send()
+        # Equals the before state to the current state
+        weatherState = weatherState2
+        time.sleep(10)
 
 ############ JSON FILE MANAGEMENT ############
 
@@ -1546,6 +1578,8 @@ if  (len(sys.argv) == 5):
 
     selectedTaxi = None
     selectedPos = "000"
+    weatherState = "GOOD"
+    weatherState2 = "GOOD"
 
     # We initialize the internalMemory to an empty dictionary
     internalMemory = {}
@@ -1573,6 +1607,11 @@ if  (len(sys.argv) == 5):
         
         # Generate certificate for broadcast comunication
         generateBroadcastCertificate()
+
+        # We creathe a thread to periodically check the condition of the city temperature
+        temperatureThread = threading.Thread(target=weatherManager)
+        temperatureThread.daemon = True
+        temperatureThread.start()
 
         # We create a thread to begin listening for taxi authentification
         taxiAuthenticationThread = threading.Thread(target=startAuthenticationService, args=(ADDR[0], ADDR[1]))
