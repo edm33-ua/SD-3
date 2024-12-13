@@ -65,7 +65,7 @@ def encodeMessage(originalMessage):
             finalMessage = f"{token}|{encodedMessage}"
             # print(f"Mensaje codificado con el certificado: {certificate}")
             print(f"[MESSAGE ENCODER] Message '{originalMessage}' encoded correctly")
-            return finalMessage.encode(FORMAT)
+            return finalMessage.encode(FORMAT)      # Devuelve el mensaje ya en forma de bytes
         return False
     except Exception as e:
         print(f"[MESSAGE ENCODER] THERE HAS BEEN AN ERROR ENCODING THE MESSAGE. {e}")
@@ -92,8 +92,8 @@ def decodeIfForMe(message):
             print(f"[MESSAGE DECODER] Message '{originalMessage}' decoded correctly")
             # print("El mensaje original era:")
             # print(originalMessage)
-            return originalMessage
-        print("-.-.-.-.-.-.-.- El mensaje no era para mí")
+            return originalMessage.decode(FORMAT)   # Devuelve en utf-8
+        # print("-.-.-.-.-.-.-.- El mensaje no era para mí")
         return False
     except Exception as e:
         print(f"[MESSAGE DECODER] THERE HAS BEEN AN ERROR DECODING THE MESSAGE. {e}")
@@ -180,10 +180,9 @@ def waitForACK():
         for message in ackListener:
             decodedMessage = decodeIfForMe(message.value)
             if decodedMessage:
-                decodedMessage = decodedMessage.decode(FORMAT)
-                print("received: "+ decodedMessage)
                 if ID in decodedMessage:
                     ok = True
+                    print(f"[SEND STATE] ACK received successfully")
                     break
         if not ok:
             print("[ALARM] LOST CONNECTION WITH CENTRAL CONTROL")
@@ -196,7 +195,7 @@ def waitForACK():
         print(f"[SEND STATE] AN ERROR OCURRED WHILE SENDING MY STATE: {e}")
     finally:
         if ackListener is not None:
-            print(f"[SEND STATE] CLOSING ACK LISTENER")
+            print(f"[SEND STATE] Closing ACK listener")
             ackListener.close()
 
 # DESCRIPTION: Escucha el topic Central2DEOrder, añadiendo las peticiones de servicio a la lista de tareas
@@ -211,49 +210,55 @@ def receiveInstructions():
         receiver = KafkaConsumer("Central2DEOrder", bootstrap_servers=str(BROKER_IP) + ':' + str(BROKER_PORT))
         answerManager = KafkaProducer(bootstrap_servers=str(BROKER_IP) + ':' + str(BROKER_PORT))
         for message in receiver:
-            decodedMessage = message.value.decode(FORMAT)
-            if ID + '_' in decodedMessage:
-                if "STOP" in decodedMessage:
-                    # Send ACK message
-                    time.sleep(1)
-                    answerManager.send("DE2CentralACK", ("ACK_" + ID).encode(FORMAT))
-                    stop()
-
-                elif "RESUME" in decodedMessage:
-                    # Send ACK message
-                    time.sleep(1)
-                    answerManager.send("DE2CentralACK", ("ACK_" + ID).encode(FORMAT))
-                    resume()
-
-                elif "DISMOUNT" in decodedMessage:
-                    print("[CUSTOMER MANAGEMENT] Dismounting customer")
-                    # Send ACK message
-                    time.sleep(1)
-                    answerManager.send("DE2CentralACK", ("ACK_" + ID).encode(FORMAT))
-                    customerOnBoard = False
-                    
-                elif "MOUNT" in decodedMessage:
-                    print("[CUSTOMER MANAGEMENT] Mounting customer")
-                    # Send ACK message
-                    time.sleep(1)
-                    answerManager.send("DE2CentralACK", ("ACK_" + ID).encode(FORMAT))
-                    customerOnBoard = True
-                    
-                elif '_GO_' in decodedMessage:
-                    if not active:
-                        # Message format: <TAXIID>_GO_<LOCATION>
-                        location = decodedMessage[6:]
-                        print(f"[COMMUNICATION] Received message goto {location}")
+            decodedMessage = decodeIfForMe(message.value)
+            if decodedMessage:
+                if ID + '_' in decodedMessage:
+                    if "STOP" in decodedMessage:
                         # Send ACK message
                         time.sleep(1)
-                        answerManager.send("DE2CentralACK", ("ACK_" + ID).encode(FORMAT))
+                        encodedAckMessage = encodeMessage(f"ACK_{ID}")                        
+                        answerManager.send("DE2CentralACK", encodedAckMessage)
+                        stop()
+
+                    elif "RESUME" in decodedMessage:
+                        # Send ACK message
+                        time.sleep(1)
+                        encodedAckMessage = encodeMessage(f"ACK_{ID}")                        
+                        answerManager.send("DE2CentralACK", encodedAckMessage)
+                        resume()
+
+                    elif "DISMOUNT" in decodedMessage:
+                        print("[CUSTOMER MANAGEMENT] Dismounting customer")
+                        # Send ACK message
+                        time.sleep(1)
+                        encodedAckMessage = encodeMessage(f"ACK_{ID}")                        
+                        answerManager.send("DE2CentralACK", encodedAckMessage)
+                        customerOnBoard = False
                         
-                        # Start the way to the destination
-                        goToThread = threading.Thread(target=goTo, args=(location, ))
-                        goToThread.daemon = True
-                        goToThread.start()
-                    else:
-                        print(f"[COMMUNICATION] Asked to go to {location}. But already on another service")
+                    elif "MOUNT" in decodedMessage:
+                        print("[CUSTOMER MANAGEMENT] Mounting customer")
+                        # Send ACK message
+                        time.sleep(1)
+                        encodedAckMessage = encodeMessage(f"ACK_{ID}")                        
+                        answerManager.send("DE2CentralACK", encodedAckMessage)
+                        customerOnBoard = True
+                        
+                    elif '_GO_' in decodedMessage:
+                        if not active:
+                            # Message format: <TAXIID>_GO_<LOCATION>
+                            location = decodedMessage[6:]
+                            print(f"[COMMUNICATION] Received message goto {location}")
+                            # Send ACK message
+                            time.sleep(1)
+                            encodedAckMessage = encodeMessage(f"ACK_{ID}")                        
+                            answerManager.send("DE2CentralACK", encodedAckMessage)
+                            
+                            # Start the way to the destination
+                            goToThread = threading.Thread(target=goTo, args=(location, ))
+                            goToThread.daemon = True
+                            goToThread.start()
+                        else:
+                            print(f"[COMMUNICATION] Asked to go to {location}. But already on another service")
     # Manage any exception ocurred
     except Exception as e:
         print(f"[INSTRUCTION RECEIVER] AN ERROR OCURRED: {e}")
@@ -661,8 +666,6 @@ def translateMapMessage(mapMessage):
     mapArray = str(mapMessage).split(",")
     lockMapArray.release()
     lockLastMapArray.release()
-
-
 
 # DESCRIPTION: Imprime por pantalla la casilla seleccionada
 # STARTING_VALUES: x e y de la casilla

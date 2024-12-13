@@ -690,7 +690,7 @@ def getToken(taxiID):
 def encodeMessage(taxiID, originalMessage):
     global taxiSession
     try:    
-        taxiToken = getToken(taxiID)
+        taxiToken = getToken(str(taxiID).zfill(2))
         if taxiToken:
             certificate = taxiSessions[taxiToken][0]
             f = Fernet(certificate)
@@ -698,7 +698,7 @@ def encodeMessage(taxiID, originalMessage):
             encodedMessage = f.encrypt(originalMessage.encode(FORMAT))
             finalMessage = taxiToken + "|" + encodedMessage.decode(FORMAT)
             print(f"[MESSAGE ENCODER] Message '{originalMessage}' encoded correctly")
-            return finalMessage.encode(FORMAT)
+            return finalMessage.encode(FORMAT)      # Como cadena de bytes
         
         return False
     except Exception as e:
@@ -713,6 +713,7 @@ def encodeMessage(taxiID, originalMessage):
 def decodeMessage(message):
     global taxiSessions
     try:
+        message = message.decode(FORMAT)
         splitMessage = message.split("|")
         # print("-------> MENSAJE RECIBIDO: " + message)
         taxiToken = splitMessage[0]
@@ -726,9 +727,9 @@ def decodeMessage(message):
             # print(f"Taxi certificate used for decoding: {taxiCertificate}")
             # print(f"Mensaje a desencriptar: {encryptedMessage}")
             originalMessage = f.decrypt(encryptedMessage.encode(FORMAT))
-            print(f"[MESSAGE DECODER] Message '{originalMessage}' decoded correctly")
+            print(f"[MESSAGE DECODER] Message '{originalMessage.decode(FORMAT)}' decoded correctly")
             # print(originalMessage.decode(FORMAT))
-            return originalMessage.decode(FORMAT)
+            return originalMessage.decode(FORMAT)       # Devuelve el mensaje codificado como cadena de caracteres
     
     except Exception as e:
         print(f"[MESSAGE DECODER] THERE HAS BEEN AN ERROR DECODING THE MESSAGE. {e}")
@@ -942,27 +943,28 @@ def hearTaxiStates():
         for message in consumer:
             # We decode the message and extract its information
             # <TAXIID>_<LOCATION>_<STATE>_<ACTIVE>_<MOUNTED>
-            extractedMessage = message.value.decode(FORMAT)
-            decodedMessage = decodeMessage(extractedMessage)
-            taxiID = decodedMessage[0:2]
-            location = decodedMessage[3:6]
-            state = decodedMessage[7:9]
-            active = decodedMessage[10:11]
-            mounted = decodedMessage[12:]
-            # We then create a thread that after a second, will send the ACK through kafka
-            message = ("ACK_" + taxiID)
-            encodedMessage = encodeMessage(taxiID, message)
-            threading.Timer(1, lambda: producer.send('Central2DEACK', encodedMessage)).start()
-            # Then we update the internalMemory (dictionary) for the taxi, first creating a new Taxi entity
-            memLock.acquire()
-            oldValue = internalMemory[taxiID]
-            newValue = Taxi(taxiID, state, active, oldValue.onService, oldValue.client, mounted, location)
-            internalMemory.update({taxiID: newValue})
-            memLock.release()
-            # As well as updating the disconnection counter
-            connDicLock.acquire()
-            connDictionary.update({taxiID: 0})
-            connDicLock.release()
+            decodedMessage = decodeMessage(message.value)
+            # If sender's token is correct
+            if decodedMessage:
+                taxiID = decodedMessage[0:2]
+                location = decodedMessage[3:6]
+                state = decodedMessage[7:9]
+                active = decodedMessage[10:11]
+                mounted = decodedMessage[12:]
+                # We then create a thread that after a second, will send the ACK through kafka
+                message = ("ACK_" + taxiID)
+                encodedMessage = encodeMessage(taxiID, message)
+                threading.Timer(1, lambda: producer.send('Central2DEACK', encodedMessage)).start()
+                # Then we update the internalMemory (dictionary) for the taxi, first creating a new Taxi entity
+                memLock.acquire()
+                oldValue = internalMemory[taxiID]
+                newValue = Taxi(taxiID, state, active, oldValue.onService, oldValue.client, mounted, location)
+                internalMemory.update({taxiID: newValue})
+                memLock.release()
+                # As well as updating the disconnection counter
+                connDicLock.acquire()
+                connDictionary.update({taxiID: 0})
+                connDicLock.release()
 
     except Exception as e:
         print(f"[TAXI FLEET MANAGEMENT]: THERE HAS BEEN AN ERROR WHILE HEARING TAXIS' STATES. {e}")
@@ -1057,27 +1059,31 @@ def informTaxiAboutMountOrDismount(string, taxiID):
         consumer = KafkaConsumer('DE2CentralACK', bootstrap_servers=str(BROKER_IP) + ':' + str(BROKER_PORT), consumer_timeout_ms=10000)     
         # Then we send, depending on the string, mount or dismount
         if string == "mount":
-            producer.send('Central2DEOrder', (taxiID + '_MOUNT').encode(FORMAT))
+            encodedOrderMessage = encodeMessage(taxiID, f"{taxiID}_MOUNT")
+            producer.send('Central2DEOrder', encodedOrderMessage)
         elif string == "dismount":
-            producer.send('Central2DEOrder', (taxiID + '_DISMOUNT').encode(FORMAT))
+            encodedOrderMessage = encodeMessage(taxiID, f"{taxiID}_DISMOUNT")
+            producer.send('Central2DEOrder', encodedOrderMessage)
         # Then we hear the ACK
         for message in consumer:
-            decodedMessage = message.value.decode(FORMAT)
-            if taxiID in decodedMessage:
-                if 'ACK' in decodedMessage:
-                    memLock.acquire()
-                    # If we want to mount the client in the taxi, we set the mount value in the dictionary to 'Y'
-                    if string == "mount":
-                        oldValue = internalMemory[taxiID]
-                        newValue = Taxi(oldValue.id, oldValue.state, oldValue.active, oldValue.onService, oldValue.client, 'Y', oldValue.pos)
-                        internalMemory.update({taxiID: newValue})
-                    # But if we want to dismount the client in the taxi, we set the mount value in the dictionary to 'N', and we dissasociate the client
-                    elif string == "dismount":
-                        oldValue = internalMemory[taxiID]
-                        newValue = Taxi(oldValue.id, oldValue.state, 'N', 'N', '-', 'N', oldValue.pos)
-                        internalMemory.update({taxiID: newValue})
-                    memLock.release()
-                    return True
+            decodedMessage = decodeMessage(message.value)
+            # decodedMessage = message.value.decode(FORMAT)
+            if decodedMessage:
+                if taxiID in decodedMessage:
+                    if 'ACK' in decodedMessage:
+                        memLock.acquire()
+                        # If we want to mount the client in the taxi, we set the mount value in the dictionary to 'Y'
+                        if string == "mount":
+                            oldValue = internalMemory[taxiID]
+                            newValue = Taxi(oldValue.id, oldValue.state, oldValue.active, oldValue.onService, oldValue.client, 'Y', oldValue.pos)
+                            internalMemory.update({taxiID: newValue})
+                        # But if we want to dismount the client in the taxi, we set the mount value in the dictionary to 'N', and we dissasociate the client
+                        elif string == "dismount":
+                            oldValue = internalMemory[taxiID]
+                            newValue = Taxi(oldValue.id, oldValue.state, 'N', 'N', '-', 'N', oldValue.pos)
+                            internalMemory.update({taxiID: newValue})
+                        memLock.release()
+                        return True
         print(f'[CENTRAL CONTROL] Taxi {taxiID} hasn\'t answered the mount/dismount petition. Proceeding with deletion...')
         # RESILIENCE
         return False   
@@ -1098,15 +1104,20 @@ def sendTaxiToLocation(location, taxiID):
     try:
         producer = KafkaProducer(bootstrap_servers=str(BROKER_IP) + ':' + str(BROKER_PORT))
         consumer = KafkaConsumer('DE2CentralACK', bootstrap_servers=str(BROKER_IP) + ':' + str(BROKER_PORT), consumer_timeout_ms = 5000)
-        producer.send("Central2DEOrder", (str(taxiID).zfill(2) + "_GO_" + str(location).zfill(3)).encode(FORMAT))
+        # Encriptación y envío del mensaje 
+        print("------------------------------------Proceso de envío de orden: "+  (str(taxiID).zfill(2) + "_GO_" + str(location).zfill(3)))
+        encodedOrderMessage = encodeMessage(taxiID, (str(taxiID).zfill(2) + "_GO_" + str(location).zfill(3)))
+        print(f"------------------------------------Orden generada: {encodedOrderMessage} ")
+        producer.send("Central2DEOrder", encodedOrderMessage)
         print(f'[SEND TAXI TO LOCATION] Sending taxi {taxiID} to location {str(location).zfill(3)}')
         # We make a boolean to know if it has answered us
         answer = False
         for message in consumer:
-            decodedMessage = message.value.decode(FORMAT)
-            if taxiID in decodedMessage:
-                answer = True
-                break
+            decodedMessage = decodeMessage(message.value)
+            if decodedMessage:
+                if taxiID in decodedMessage:
+                    answer = True
+                    break
         if not answer:
             # RESILIENCE
             print(f'[SEND TAXI TO LOCATION] Taxi {taxiID} hasn\'t answered GO order. Proceeding with deletion...')
@@ -1126,15 +1137,17 @@ def stopTaxi():
     try:
         producer = KafkaProducer(bootstrap_servers=str(BROKER_IP) + ':' + str(BROKER_PORT))
         consumer = KafkaConsumer('DE2CentralACK', bootstrap_servers=str(BROKER_IP) + ':' + str(BROKER_PORT))
-        producer.send("Central2DEOrder", (str(taxiID).zfill(2) + "_STOP").encode())
+        encodedOrderMessage = encodeMessage(taxiID, str(taxiID).zfill(2) + "_STOP")
+        producer.send("Central2DEOrder", encodedOrderMessage)
         print(f'[STOP TAXI] Stopping taxi {taxiID}')
         # We make a boolean to know if it has answered us
         answer = False
         for message in consumer:
-            decodedMessage = message.value.decode(FORMAT)
-            if taxiID in decodedMessage:
-                answer = True
-                break
+            decodedMessage = decodeMessage(message.value)
+            if decodedMessage:
+                if taxiID in decodedMessage:
+                    answer = True
+                    break
         if not answer:
             # RESILIENCE
             print(f'[STOP TAXI] Taxi {taxiID} hasn\'t answered STOP order. Proceeding with deletion...')
@@ -1155,15 +1168,17 @@ def resumeTaxi():
     try:
         producer = KafkaProducer(bootstrap_servers=str(BROKER_IP) + ':' + str(BROKER_PORT))
         consumer = KafkaConsumer('DE2CentralACK', bootstrap_servers=str(BROKER_IP) + ':' + str(BROKER_PORT))
-        producer.send("Central2DEOrder", (str(taxiID).zfill(2) + "_RESUME").encode())
+        encodedOrderMessage = encodeMessage(taxiID, (taxiID).zfill(2) + "_RESUME")
+        producer.send("Central2DEOrder", encodedOrderMessage)
         print(f'[RESUME TAXI\'S WAY] Resuming taxi {taxiID} service')
         # We make a boolean to know if it has answered us
         answer = False
         for message in consumer:
-            decodedMessage = message.value.decode(FORMAT)
-            if taxiID in decodedMessage:
-                answer = True
-                break
+            decodedMessage = decodedMessage(message.value)
+            if decodedMessage:
+                if taxiID in decodedMessage:
+                    answer = True
+                    break
         if not answer:
             # RESILIENCE
             print(f'[RESUME TAXI\'S WAY] Taxi {taxiID} hasn\'t answered RESUME order. Proceeding with deletion...')
