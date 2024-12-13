@@ -780,7 +780,7 @@ def encodeMessage(taxiID=False, originalMessage="", broadcastEncoding=False):
             taxiToken = getToken(str(taxiID).zfill(2))
             if taxiToken:
                 token = taxiToken
-                certificateFileName = f"{str(taxiID)}_{token}"
+                certificateFileName = f"{str(str(taxiID).zfill(2))}_{token}.cert"
                 certificate = getCertificateFromFile(certificateFileName)
         
         if certificate:
@@ -788,7 +788,8 @@ def encodeMessage(taxiID=False, originalMessage="", broadcastEncoding=False):
             # print(originalMessage)
             encodedMessage = f.encrypt(originalMessage.encode(FORMAT))
             finalMessage = token + "|" + encodedMessage.decode(FORMAT)
-            print(f"[MESSAGE ENCODER] Message '{originalMessage}' encoded correctly")
+            if not broadcastEncoding:
+                print(f"[MESSAGE ENCODER] Message '{originalMessage}' encoded correctly")
             return finalMessage.encode(FORMAT)      # Como cadena de bytes
         
         return False

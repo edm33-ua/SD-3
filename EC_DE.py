@@ -84,13 +84,14 @@ def decodeIfForMe(message):
         destToken = splitMessage[0]
         encryptedMessage = splitMessage[1].encode(FORMAT)
         # If the message is addressed to this taxi
+        print(f"-------RECEIVED TOKEN: {destToken}")
         if destToken == token:
             f = Fernet(certificate)
             # print("----> MENSAJE:")
             # print(encryptedMessage)
             # print(certificate)
             originalMessage = f.decrypt(encryptedMessage)
-            print(f"[MESSAGE DECODER] Message '{originalMessage}' decoded correctly")
+            print(f"[MESSAGE DECODER] Message '{originalMessage.decode(FORMAT)}' decoded correctly")
             # print("El mensaje original era:")
             # print(originalMessage)
             return originalMessage.decode(FORMAT)   # Devuelve en utf-8
@@ -98,7 +99,7 @@ def decodeIfForMe(message):
         elif destToken == "broadcastMessage":
             f = Fernet(broadcastCertificate)
             originalMessage = f.decrypt(encryptedMessage)
-            print(f"[MESSAGE DECODER] Broadcast message '{originalMessage}' decoded correctly")
+            print(f"[MESSAGE DECODER] Broadcast message '{originalMessage.decode(FORMAT)}' decoded correctly")
             return originalMessage.decode(FORMAT)   # Devuelve en utf-8
         return False
     except Exception as e:
@@ -454,9 +455,9 @@ def receiveWeatherChanges():
                     elif "BADWEATHER" in decodedMessage:
                         print(f"[WEATHER RECEIVER] WARNING: Received weather is KO. Returning to Base")
                         activeBeforeEmergency = active
-                        receiveMapStateThread = threading.Thread(target=goTo, args=("000", True))
-                        receiveMapStateThread.daemon = True
-                        receiveMapStateThread.start()
+                        emergencyGoToThread = threading.Thread(target=goTo, args=("000", True))
+                        emergencyGoToThread.daemon = True
+                        emergencyGoToThread.start()
 
                         
 
@@ -714,10 +715,10 @@ def receiveMapState(mapButtons):
 
     while True:
         try:
-            
-            if broadcastCertificate:
+            if authenticated:
                 # Kafka producer and consumer
                 for message in receiver:
+                    print(f"Mensaje recibido: {message.value.decode(FORMAT)}")
                     decodedMessage = decodeIfForMe(message.value)
                     # print(f"Mapa recibido: {decodedMessage}")
                     translateMapMessage(decodedMessage)
@@ -727,7 +728,6 @@ def receiveMapState(mapButtons):
         # Manage any exception ocurred
         except Exception as e:
             print(f"[MAP RECEIVER] THERE HAS BEEN AN ERROR WHILE RECEIVING MAP STATE INFORMATION. {e}")
-        finally:
             receiver.close()
 
 # DESCRIPTION: Convierte la cadena de caracteres recibida en un array y actualiza el estado del mapa
