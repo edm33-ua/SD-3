@@ -15,6 +15,7 @@ import ssl
 from secrets import token_hex
 from cryptography.fernet import Fernet
 import hashlib
+import requests
 
 # SERVER = "172.21.242.82"
 MAP_ROWS = 20
@@ -31,7 +32,7 @@ global dbLock, internalMemory, memLock, locationDictionary, locLock, clientMapLo
 global connDictionary, connDicLock
 global taxiTableGlobal, selectedTaxi, selectedPos
 global clientConnections, clientConnectionsLock
-
+global weatherState, weatherState2
 global taxiSessions
 
 ############ LOCAL CLASSES ############
@@ -83,6 +84,42 @@ class Client:
     # Method to represent the Client when printing
     def __str__(self) -> str:
         return f"<CLIENT {self.id}: Destination:{self.destination}, State:{self.state}>"
+
+############ CTC WEATHER CONTROL ############
+
+# DESCRIPTION: Este método lo que hace es llamar a la API de EC_CTC y comprobar su respuesta, enviando un BADWEATHER o GOODWEATHER,
+# solo al haber un cambio, por el tópico de kafka para las órdenes de los taxis
+# STARTING_VALUES: NONE
+# RETURNS: NONE
+# NEEDS: NONE
+def weatherManager():
+    global weatherState, weatherState2, SERVER
+    producer = KafkaProducer(bootstrap_servers=str(BROKER_IP) + ':' + str(BROKER_PORT))
+    # We define the url to call
+    url = "http://" + SERVER + ":5000/getWeather"
+    while True:
+        # Calls the CTC API
+        response = requests.get(url)
+        print(url)
+        print(response)
+        response = response.json()
+        # Disects the response
+        if response["response"] == 'OK':
+            weatherState2 = 'GOOD'
+        elif response["response"] == 'KO':
+            weatherState2 = 'BAD'
+        if weatherState != weatherState2:
+            if weatherState2 == 'GOOD':
+                # Enviar el GOODWEATHER
+                encodedMessage = encodeMessage(originalMessage='GOODWEATHER', broadcastEncoding=True)
+                producer.send('Central2DEWeather', encodedMessage)
+            else:
+                # Enviar el BADWEATHER
+                encodedMessage = encodeMessage(originalMessage='BADWEATHER', broadcastEncoding=True)
+                producer.send('Central2DEWeather', encodedMessage)
+        # Equals the before state to the current state
+        weatherState = weatherState2
+        time.sleep(10)
 
 ############ JSON FILE MANAGEMENT ############
 
@@ -523,83 +560,91 @@ def informClientAboutJourney():
         producer = KafkaProducer(bootstrap_servers=str(BROKER_IP) + ':' + str(BROKER_PORT))
         # We hear the message from the taxi
         for message in taxiConsumer:
-            decodedMessage = message.value.decode(FORMAT)
-            # If it was a LOCATION message
-            if 'LOCATION' in decodedMessage:
-                taxiID = decodedMessage[0:2]
-                time.sleep(1)
-                producer.send('Central2DEServiceACK', (taxiID + '_ACK').encode(FORMAT))
-                # We make sure the taxi had a client so we don't confuse it as a response for a CENTRAL CONTROL order
-                memLock.acquire()
-                value = internalMemory[taxiID]
-                memLock.release()
-                if value.client != '-':
-                    # If the taxi had a client, we first send a MOUNT to the client
+            decodedMessage = decodeMessage(message.value)
+            if decodedMessage:
+                # If it was a LOCATION message
+                if 'LOCATION' in decodedMessage:
+                    taxiID = decodedMessage[0:2]
                     time.sleep(1)
-                    producer.send('Central2CustomerInformation', (value.client + '_MOUNT').encode(FORMAT))
-                    # Adding client to pending ACK dictionary
-                    addToClientConnections(value.client)
-                    print(f'[CLIENT MANAGER] Sending MOUNT message to client {value.client}')
+                    producer.send('Central2DEServiceACK', (taxiID + '_ACK').encode(FORMAT))
+                    # We make sure the taxi had a client so we don't confuse it as a response for a CENTRAL CONTROL order
+                    memLock.acquire()
+                    value = internalMemory[taxiID]
+                    memLock.release()
+                    if value.client != '-':
+                        # If the taxi had a client, we first send a MOUNT to the client
+                        time.sleep(1)
+                        producer.send('Central2CustomerInformation', (value.client + '_MOUNT').encode(FORMAT))
+                        # Adding client to pending ACK dictionary
+                        addToClientConnections(value.client)
+                        print(f'[CLIENT MANAGER] Sending MOUNT message to client {value.client}')
+                        # We create a boolean to check if the client has answered us
+                        answer = False
+                        for ACKMessage in clientConsumer:
+                            decodedACKMessage = ACKMessage.value.decode(FORMAT)
+                            if value.client in decodedACKMessage:
+                                # Deleting client from pending ACK dictionary
+                                removeFromClientConnections(value.client)
+                                # If the client answers us with an ACK, we then inform the taxi of all necessary changes, and send him to the destination
+                                informTaxiAboutMountOrDismount('mount', taxiID)
+                                memLock.acquire()
+                                locLock.acquire()
+                                clientLock.acquire()
+                                destination = internalMemory[value.client].destination
+                                clientMapLocation.pop(value.client)
+                                locLock.release()
+                                memLock.release()
+                                clientLock.release()
+                                sendTaxiToLocation(destination, taxiID)
+                                answer = True
+                                break
+                        # If the client has answered us, we skip the resilience bit
+                        if answer == True:
+                            continue
+                        # RESILIENCE
+                # If it was a DESTINATION message
+                elif 'DESTINATION' in decodedMessage:
+                    taxiID = decodedMessage[0:2]
+                    time.sleep(1)
+                    producer.send('Central2DEServiceACK', (taxiID + '_ACK').encode(FORMAT))
+                    # We proceed to modify the internal memory to reflect the end of service for the taxi, as well as deleting the client
+                    time.sleep(0.5)
+                    memLock.acquire()
+                    locLock.acquire()
+                    value = internalMemory[taxiID]
+                    position = internalMemory[value.client].destination
+                    locLock.release()
+                    memLock.release()
+                    # We send the DISMOUNT message to the client
+                    time.sleep(1)
+                    producer.send('Central2CustomerInformation', (value.client + '_FINISHED_' + str(position)).encode(FORMAT))
+                    # Then we unassign the client from the taxi,
+                    informTaxiAboutMountOrDismount('dismount', taxiID)
+                    # as well as deleting the client from internal memory
+                    memLock.acquire()
+                    internalMemory.pop(value.client)
+                    memLock.release()
+                    print(f'[CLIENT MANAGER] Client {value.client} has reach its destination and has been deleted from database')
                     # We create a boolean to check if the client has answered us
                     answer = False
                     for ACKMessage in clientConsumer:
                         decodedACKMessage = ACKMessage.value.decode(FORMAT)
                         if value.client in decodedACKMessage:
-                            # Deleting client from pending ACK dictionary
-                            removeFromClientConnections(value.client)
-                            # If the client answers us with an ACK, we then inform the taxi of all necessary changes, and send him to the destination
-                            informTaxiAboutMountOrDismount('mount', taxiID)
-                            memLock.acquire()
-                            locLock.acquire()
-                            clientLock.acquire()
-                            destination = internalMemory[value.client].destination
-                            clientMapLocation.pop(value.client)
-                            locLock.release()
-                            memLock.release()
-                            clientLock.release()
-                            sendTaxiToLocation(destination, taxiID)
                             answer = True
                             break
                     # If the client has answered us, we skip the resilience bit
                     if answer == True:
-                        continue
+                        continue           
                     # RESILIENCE
-            # If it was a DESTINATION message
-            elif 'DESTINATION' in decodedMessage:
-                taxiID = decodedMessage[0:2]
-                time.sleep(1)
-                producer.send('Central2DEServiceACK', (taxiID + '_ACK').encode(FORMAT))
-                # We proceed to modify the internal memory to reflect the end of service for the taxi, as well as deleting the client
-                time.sleep(0.5)
-                memLock.acquire()
-                locLock.acquire()
-                value = internalMemory[taxiID]
-                position = internalMemory[value.client].destination
-                locLock.release()
-                memLock.release()
-                # We send the DISMOUNT message to the client
-                time.sleep(1)
-                producer.send('Central2CustomerInformation', (value.client + '_FINISHED_' + str(position)).encode(FORMAT))
-                # Then we unassign the client from the taxi,
-                informTaxiAboutMountOrDismount('dismount', taxiID)
-                # as well as deleting the client from internal memory
-                memLock.acquire()
-                internalMemory.pop(value.client)
-                memLock.release()
-                print(f'[CLIENT MANAGER] Client {value.client} has reach its destination and has been deleted from database')
-                # We create a boolean to check if the client has answered us
-                answer = False
-                for ACKMessage in clientConsumer:
-                    decodedACKMessage = ACKMessage.value.decode(FORMAT)
-                    if value.client in decodedACKMessage:
-                        answer = True
-                        break
-                 # If the client has answered us, we skip the resilience bit
-                if answer == True:
-                    continue           
-                # RESILIENCE
-                print(f'[CLIENT MANAGER] Client {value.client} hasn\'t answered FINISHED message')
-                # removeFromClientConnections(value.client)     
+                    print(f'[CLIENT MANAGER] Client {value.client} hasn\'t answered FINISHED message')
+                    # removeFromClientConnections(value.client)     
+                
+                # If it was a destination for an emergency action
+                elif "_EMERGENCY_ACTION_SUCCESSFUL" in decodeMessage:
+                    messageInfo = decodedMessage.split("_")
+                    taxiID = messageInfo[0]
+                    print(f'[TAXI FLEET MANAGEMENT] Taxi {taxiID} finished emergency action')
+            
 
     except Exception as e:
         print(f'[CLIENT HANDLER] THERE HAS BEEN AN ERROR WHILE KEEPING TRACK OF THE CLIENTS\' JOURNEYS. {e}')
@@ -1554,6 +1599,8 @@ if  (len(sys.argv) == 5):
 
     selectedTaxi = None
     selectedPos = "000"
+    weatherState = "GOOD"
+    weatherState2 = "GOOD"
 
     # We initialize the internalMemory to an empty dictionary
     internalMemory = {}
@@ -1581,6 +1628,11 @@ if  (len(sys.argv) == 5):
         
         # Generate certificate for broadcast comunication
         generateBroadcastCertificate()
+
+        # We creathe a thread to periodically check the condition of the city temperature
+        temperatureThread = threading.Thread(target=weatherManager)
+        temperatureThread.daemon = True
+        temperatureThread.start()
 
         # We create a thread to begin listening for taxi authentification
         taxiAuthenticationThread = threading.Thread(target=startAuthenticationService, args=(ADDR[0], ADDR[1]))
