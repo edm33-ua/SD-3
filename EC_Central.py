@@ -100,8 +100,6 @@ def weatherManager():
     while True:
         # Calls the CTC API
         response = requests.get(url)
-        print(url)
-        print(response)
         response = response.json()
         # Disects the response
         if response["response"] == 'OK':
@@ -113,10 +111,12 @@ def weatherManager():
                 # Enviar el GOODWEATHER
                 encodedMessage = encodeMessage(originalMessage='GOODWEATHER', broadcastEncoding=True)
                 producer.send('Central2DEWeather', encodedMessage)
+                print(f"[WEATHER MANAGER] The sun shines again!")
             else:
                 # Enviar el BADWEATHER
                 encodedMessage = encodeMessage(originalMessage='BADWEATHER', broadcastEncoding=True)
                 producer.send('Central2DEWeather', encodedMessage)
+                print(f"[WEATHER MANAGER] A storm approaches...")
         # Equals the before state to the current state
         weatherState = weatherState2
         time.sleep(10)
