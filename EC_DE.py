@@ -29,7 +29,7 @@ global x, y, state, active, customerOnBoard, sensorsState, sensorsIDs
 
 global lockState, lockActive, lockCustomerOnBoard, lockSensorsState, lockService
 
-global registered, authenticated
+global registered, authenticated, emergency, activeBeforeEmergency
 
 # Token y certificado de la sesión actual  (False si no está autenticado)
 global token, certificate, broadcastCertificate
@@ -264,19 +264,6 @@ def receiveInstructions():
                         goToThread = threading.Thread(target=goTo, args=(location, ))
                         goToThread.daemon = True
                         goToThread.start()
-                    # Para manejar situación de tiempo                   
-                    elif "GOODWEATHER" in decodedMessage:
-                        # Send ACK message
-                        time.sleep(1)
-                        encodedAckMessage = encodeMessage(f"ACK_{ID}")                        
-                        answerManager.send("DE2CentralACK", encodedAckMessage)
-                        resume()
-                    elif "BADWEATHER" in decodedMessage:
-                        # Send ACK message
-                        time.sleep(1)
-                        encodedAckMessage = encodeMessage(f"ACK_{ID}")                        
-                        answerManager.send("DE2CentralACK", encodedAckMessage)
-                        resume()
                         # else:
                         #     print(f"[COMMUNICATION] Asked to go to {location}. But already on another service")
     # Manage any exception ocurred
@@ -294,8 +281,8 @@ def receiveInstructions():
 # STARTING_VALUES: Posición de destino
 # RETURNS: NONE
 # NEEDS: decipherPos()
-def goTo(destPos):
-    global x, y, active, state, lockActive, customerOnBoard
+def goTo(destPos, prioritary=False):
+    global x, y, active, state, lockActive, customerOnBoard, emergency
     try:
         producer = KafkaProducer(bootstrap_servers=str(BROKER_IP) + ':' + str(BROKER_PORT))
         ackListener = KafkaConsumer("Central2DEServiceACK", bootstrap_servers=str(BROKER_IP)+':'+str(BROKER_PORT), consumer_timeout_ms=SECONDS*1000)
@@ -307,11 +294,11 @@ def goTo(destPos):
         active = True
         lockActive.release()
 
-        while ((x != destX or y != destY)):
-        # while ((x != destX or y != destY) and not (emergencia and not hayEmergencia)):
+        # while ((x != destX or y != destY)):
+        while ((x != destX or y != destY) and not (prioritary and not emergency)):
             time.sleep(1.5)
-            if active and state:
-            # if active and state and hayEmergencia == emergencia:
+            # if active and state:
+            if active and state and prioritary == emergency:
                 if x != destX:
                     #Is easier to go through the visible map
                     if abs(destX - x) <= MAP_COLUMNS -  abs(destX - x):
@@ -361,31 +348,50 @@ def goTo(destPos):
 
         lockService.release()
 
-        # If arrived to customer location
-        if not customerOnBoard:
-            answered = False
-            while not answered:
-                #Send signal <TAXI_ID>_ON_LOCATION
-                producer.send("DE2CentralService", (ID+"_ON_LOCATION").encode(FORMAT))
-                print(f"[MOTION SERVICE] Arrived to location")
-                for message in ackListener:
-                    decodedMessage = message.value.decode(FORMAT)
-                    if ID in decodedMessage:
-                        answered = True
-                        print(f"[MOTION SERVICE] Service ended correctly")
-        # If arrived to customer destination
+        if not prioritary:
+            # If arrived to customer location
+            if not customerOnBoard:
+                answered = False
+                while not answered:
+                    #Send signal <TAXI_ID>_ON_LOCATION
+                    encodedMessage = encodeMessage(ID+"_ON_LOCATION")
+                    producer.send("DE2CentralService", encodedMessage)
+                    print(f"[MOTION SERVICE] Arrived to location")
+                    for message in ackListener:
+                        decodedMessage = decodeIfForMe(message.value)
+                        if decodedMessage:
+                            if ID in decodedMessage:
+                                answered = True
+                                print(f"[MOTION SERVICE] Service ended correctly")
+            # If arrived to customer destination
+            else:
+                answered = False
+                while not answered:
+                    #Send signal <TAXI_ID>_ON_DESTINATION
+                    time.sleep(0.5)
+                    encodedMessage = encodeMessage(ID+"_ON_DESTINATION")
+                    producer.send("DE2CentralService", encodedMessage)
+                    print(f"[MOTION SERVICE] Arrived to customer desired destination")
+                    for message in ackListener:
+                        decodedMessage = decodeIfForMe(message.value)
+                        if decodedMessage:
+                            if ID in decodedMessage:
+                                answered = True
+                                print(f"[MOTION SERVICE] Ready to start the service")
         else:
+            stop()
             answered = False
             while not answered:
-                #Send signal <TAXI_ID>_ON_DESTINATION
-                time.sleep(0.5)
-                producer.send("DE2CentralService", (ID+"_ON_DESTINATION").encode(FORMAT))
-                print(f"[MOTION SERVICE] Arrived to customer desired destination")
+                #Send signal <TAXI_ID>_EMERGENCY_ACTION_SUCCESSFUL
+                encodedMessage = encodeMessage(ID+"_EMERGENCY_ACTION_SUCCESSFUL")
+                producer.send("DE2CentralService", encodedMessage)
+                print(f"[MOTION SERVICE] Arrived to EMERGENCY location")
                 for message in ackListener:
-                    decodedMessage = message.value.decode(FORMAT)
-                    if ID in decodedMessage:
-                        answered = True
-                        print(f"[MOTION SERVICE] Ready to start the service")
+                    decodedMessage = decodeIfForMe(message.value)
+                    if decodedMessage:
+                        if ID in decodedMessage:
+                            answered = True
+                            print(f"[MOTION SERVICE] Emergency action completed successfully")
     # Manage any exception ocurred
     except Exception as e:
         print(f"[MOTION SERVICE] THERE HAS BEEN AN ERROR ON MOVEMENT CALCULATION OR ARRIVAL INFORMATION: {e}")
@@ -426,6 +432,43 @@ def resume():
     except Exception as e:
         print(f"[MOTION SERVICE] THERE HAS BEEN AN ERROR ON TAXI RESUMING: {e}")
     
+
+def receiveWeatherChanges():
+    global active, activeBeforeEmergency
+    try:
+        receiver = KafkaConsumer("Central2DEWeather", bootstrap_servers=str(BROKER_IP) + ':' + str(BROKER_PORT))
+    except Exception as e:
+        print(f"[WEATHER RECEIVER] THERE HAS BEEN AN ERROR CREATING THE KAFKA CONSUMER. {e}")
+
+    while True:
+        try:
+            if broadcastCertificate:
+                for message in receiver:
+                    decodedMessage = decodeIfForMe(message.value)
+                    # If weather changed from bad to good
+                    if "GOODWEATHER" in decodedMessage:
+                        print(f"[WEATHER RECEIVER] Received weather is OK. Resuming services")
+                        active = activeBeforeEmergency
+
+                    # If weather changed from good to bad
+                    elif "BADWEATHER" in decodedMessage:
+                        print(f"[WEATHER RECEIVER] WARNING: Received weather is KO. Returning to Base")
+                        activeBeforeEmergency = active
+                        receiveMapStateThread = threading.Thread(target=goTo, args=("000", True))
+                        receiveMapStateThread.daemon = True
+                        receiveMapStateThread.start()
+
+                        
+
+            
+                
+        # Manage any exception ocurred
+        except Exception as e:
+            print(f"[MAP RECEIVER] THERE HAS BEEN AN ERROR WHILE RECEIVING MAP STATE INFORMATION. {e}")
+        finally:
+            receiver.close()
+
+
 ##########  SENSOR MANAGEMENT  ##########
 
 # DESCRIPTION: Inicializa el servicio de recepción de nuevas conexiones de sensores
@@ -656,6 +699,7 @@ def register(id, password):
     elif response["respnse"] == 'ERR':
         return -1
 
+
 ############ GRAPHICAL USER INTERFACE ############ 
 
 # DESCRIPTION: Recibe la cadena de caracteres con la información del estado del mapa y actualiza este en memoria y en la GUI
@@ -663,9 +707,14 @@ def register(id, password):
 # RETURNS: NONE
 # NEEDS: translateMapMessage
 def receiveMapState(mapButtons):
+    try:
+        receiver = KafkaConsumer("Central2DEMap", bootstrap_servers=str(BROKER_IP) + ':' + str(BROKER_PORT))
+    except Exception as e:
+        print(f"[MAP RECEIVER] THERE HAS BEEN AN ERROR CREATING THE KAFKA CONSUMER. {e}")
+
     while True:
         try:
-            receiver = KafkaConsumer("Central2DEMap", bootstrap_servers=str(BROKER_IP) + ':' + str(BROKER_PORT))
+            
             if broadcastCertificate:
                 # Kafka producer and consumer
                 for message in receiver:
@@ -677,7 +726,7 @@ def receiveMapState(mapButtons):
                 
         # Manage any exception ocurred
         except Exception as e:
-            print(f"[MAP RECEIVER] THERE HAS BEEN AN ERROR WHILE RECEIVING MAP STATE INFORMATION: {e}")
+            print(f"[MAP RECEIVER] THERE HAS BEEN AN ERROR WHILE RECEIVING MAP STATE INFORMATION. {e}")
         finally:
             receiver.close()
 
@@ -868,6 +917,8 @@ if (len(sys.argv) == 9):
     registered = False
     authenticated = False
     broadcastCertificate = False
+    emergency = False
+    activeBeforeEmergency = True
     sensorsState = []
     sensorsIDs = []
     mapArray = []
