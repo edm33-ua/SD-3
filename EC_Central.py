@@ -25,6 +25,7 @@ FORMAT = 'utf-8'
 TABLENAMES = ['Taxis', 'Clients', 'Registry']
 LOCATION_FILE = 'EC_locations.json'
 SECONDS = 10
+CERTIFICATE_FOLDER = 'Certificates'
 
 global dbLock, internalMemory, memLock, locationDictionary, locLock, clientMapLocation, clientLock
 global connDictionary, connDicLock
@@ -668,6 +669,21 @@ def checkClientConnections():
             
 ############ TAXI COMMUNICATION ############
 
+def generateBroadcastCertificate():
+    try:
+
+        broadCastCertificate = Fernet.generate_key()
+        filePath = CERTIFICATE_FOLDER + "/Broadcast.cert"
+        f = open(filePath, "w")
+        f.write(broadCastCertificate.decode(FORMAT))
+        f.close()
+        print(f"[BROADCAST CERITIFICATE GENERATOR] Broadcast certificate generated successfully")
+        print(broadCastCertificate)
+    except Exception as e:
+        print(f"[BROADCAST CERITIFICATE GENERATOR] THERE HAS BEEN AN ERROR GENERATING BROADCAST CERTIFICATE. {e}")
+        return False
+
+
 # DESCRIPTION: Este método recibe el ID de un taxi y obtiene, si existe,
 # el token asociado a la sesión actual de dicho taxi.
 # STARTING_VALUES: ID del taxi cuyo token se desea obtener
@@ -681,22 +697,43 @@ def getToken(taxiID):
             return str(key)
     return False
 
+
+def getCertificateFromFile(filename):
+    try:
+        filePath = CERTIFICATE_FOLDER+"/"+filename
+        f = open(filePath, "r")
+        certificate = f.readline().encode(FORMAT)
+        f.close()
+        return certificate
+    except Exception as e:
+        print(f"[CERTIFICATE HANDLER] THERE HAS BEEN AN ERROR READING THE CERTIFICATE. {e}")
+
+
 # DESCRIPTION: Este método recibe un mensaje y la id del taxi al que está dirigido
 # y devuelve el mensaje codificado en el formato token_mensajeCifrado, siendo este
 # mensaje codificado con el certificado simétrico asociado a la sesión del taxi
 # STARTING_VALUES: ID del taxi destino; Mensaje a codificar
 # RETURNS: mensaje codificado en el formato token_mensajeCifrado o False si no se ha encontrado el id
 # NEEDS: getToken()
-def encodeMessage(taxiID, originalMessage):
+def encodeMessage(taxiID=False, originalMessage="", broadcastEncoding=False):
     global taxiSession
     try:    
-        taxiToken = getToken(str(taxiID).zfill(2))
-        if taxiToken:
-            certificate = taxiSessions[taxiToken][0]
+        certificate = False
+        token = False
+        if broadcastEncoding:
+            certificate = getCertificateFromFile("Broadcast.cert")
+            token = "broadcastMessage"
+        else:
+            taxiToken = getToken(str(taxiID).zfill(2))
+            if taxiToken:
+                token = taxiToken
+                certificate = taxiSessions[taxiToken][0]
+        
+        if certificate:
             f = Fernet(certificate)
             # print(originalMessage)
             encodedMessage = f.encrypt(originalMessage.encode(FORMAT))
-            finalMessage = taxiToken + "|" + encodedMessage.decode(FORMAT)
+            finalMessage = token + "|" + encodedMessage.decode(FORMAT)
             print(f"[MESSAGE ENCODER] Message '{originalMessage}' encoded correctly")
             return finalMessage.encode(FORMAT)      # Como cadena de bytes
         
@@ -795,7 +832,8 @@ def sendMapToTaxis():
                 if i != (MAP_COLUMNS*MAP_ROWS - 1):
                     mapString += ','
             # And send the message
-            producer.send('Central2DEMap', mapString.encode(FORMAT))
+            encodedMapMessage = encodeMessage(originalMessage=mapString, broadcastEncoding=True)
+            producer.send('Central2DEMap', encodedMapMessage)
 
     except Exception as e:
         print(f'[MAP TO TAXI SENDER] THERE HAS BEEN AN ERROR WHILE SENDING THE MAP SITUATION TO THE TAXIS. {e}')
@@ -852,7 +890,8 @@ def authenticate(conn, addr):
             # If the taxi accomplishes the requirements for starting a session
             if authenticationOK:
                 token, certificate = updateSessions(taxiId)
-                message = f"OK|{token}|{certificate.decode(FORMAT)}"        # Convertimos la clave en una cadena de caracteres
+                broadcastCertificate = getCertificateFromFile("Broadcast.cert")
+                message = f"OK|{token}|{certificate.decode(FORMAT)}|{broadcastCertificate.decode(FORMAT)}"        # Convertimos la clave en una cadena de caracteres
                 print(f"------------------> BORRAR: CLAVE GENERADA = {certificate}")
                 # message = ("OK_" + str(token) + "_").encode(FORMAT)
                 # message = message + certificate
@@ -1531,6 +1570,9 @@ if  (len(sys.argv) == 5):
         checkTablesForDB()
         # We initialize the internalMemory with the DDBB data
         initializeInnerMemory()
+        
+        # Generate certificate for broadcast comunication
+        generateBroadcastCertificate()
 
         # We create a thread to begin listening for taxi authentification
         taxiAuthenticationThread = threading.Thread(target=startAuthenticationService, args=(ADDR[0], ADDR[1]))

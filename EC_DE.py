@@ -27,12 +27,12 @@ APIPORT = '5000'
 
 global x, y, state, active, customerOnBoard, sensorsState, sensorsIDs
 
-global lockState, lockActive, lockCustomerOnBoard, lockSensorsState
+global lockState, lockActive, lockCustomerOnBoard, lockSensorsState, lockService
 
 global registered, authenticated
 
 # Token y certificado de la sesión actual  (False si no está autenticado)
-global token, certificate
+global token, certificate, broadcastCertificate
 
 global mapArray, lockMapArray, lastMapArray, lockLastMapArray
 
@@ -83,6 +83,7 @@ def decodeIfForMe(message):
         splitMessage = stringMessage.split("|")
         destToken = splitMessage[0]
         encryptedMessage = splitMessage[1].encode(FORMAT)
+        # If the message is addressed to this taxi
         if destToken == token:
             f = Fernet(certificate)
             # print("----> MENSAJE:")
@@ -94,6 +95,11 @@ def decodeIfForMe(message):
             # print(originalMessage)
             return originalMessage.decode(FORMAT)   # Devuelve en utf-8
         # print("-.-.-.-.-.-.-.- El mensaje no era para mí")
+        elif destToken == "broadcastMessage":
+            f = Fernet(broadcastCertificate)
+            originalMessage = f.decrypt(encryptedMessage)
+            print(f"[MESSAGE DECODER] Broadcast message '{originalMessage}' decoded correctly")
+            return originalMessage.decode(FORMAT)   # Devuelve en utf-8
         return False
     except Exception as e:
         print(f"[MESSAGE DECODER] THERE HAS BEEN AN ERROR DECODING THE MESSAGE. {e}")
@@ -244,21 +250,35 @@ def receiveInstructions():
                         customerOnBoard = True
                         
                     elif '_GO_' in decodedMessage:
-                        if not active:
-                            # Message format: <TAXIID>_GO_<LOCATION>
-                            location = decodedMessage[6:]
-                            print(f"[COMMUNICATION] Received message goto {location}")
-                            # Send ACK message
-                            time.sleep(1)
-                            encodedAckMessage = encodeMessage(f"ACK_{ID}")                        
-                            answerManager.send("DE2CentralACK", encodedAckMessage)
-                            
-                            # Start the way to the destination
-                            goToThread = threading.Thread(target=goTo, args=(location, ))
-                            goToThread.daemon = True
-                            goToThread.start()
-                        else:
-                            print(f"[COMMUNICATION] Asked to go to {location}. But already on another service")
+                        # if not active:
+
+                        # Message format: <TAXIID>_GO_<LOCATION>
+                        location = decodedMessage[6:]
+                        print(f"[COMMUNICATION] Received message goto {location}")
+                        # Send ACK message
+                        time.sleep(1)
+                        encodedAckMessage = encodeMessage(f"ACK_{ID}")                        
+                        answerManager.send("DE2CentralACK", encodedAckMessage)
+                        
+                        # Start the way to the destination
+                        goToThread = threading.Thread(target=goTo, args=(location, ))
+                        goToThread.daemon = True
+                        goToThread.start()
+                    # Para manejar situación de tiempo                   
+                    elif "GOODWEATHER" in decodedMessage:
+                        # Send ACK message
+                        time.sleep(1)
+                        encodedAckMessage = encodeMessage(f"ACK_{ID}")                        
+                        answerManager.send("DE2CentralACK", encodedAckMessage)
+                        resume()
+                    elif "BADWEATHER" in decodedMessage:
+                        # Send ACK message
+                        time.sleep(1)
+                        encodedAckMessage = encodeMessage(f"ACK_{ID}")                        
+                        answerManager.send("DE2CentralACK", encodedAckMessage)
+                        resume()
+                        # else:
+                        #     print(f"[COMMUNICATION] Asked to go to {location}. But already on another service")
     # Manage any exception ocurred
     except Exception as e:
         print(f"[INSTRUCTION RECEIVER] AN ERROR OCURRED: {e}")
@@ -280,13 +300,18 @@ def goTo(destPos):
         producer = KafkaProducer(bootstrap_servers=str(BROKER_IP) + ':' + str(BROKER_PORT))
         ackListener = KafkaConsumer("Central2DEServiceACK", bootstrap_servers=str(BROKER_IP)+':'+str(BROKER_PORT), consumer_timeout_ms=SECONDS*1000)
         destX, destY = decipherPos(destPos)
+
+        lockService.acquire()
+
         lockActive.acquire()
         active = True
         lockActive.release()
 
-        while (x != destX or y != destY):
+        while ((x != destX or y != destY)):
+        # while ((x != destX or y != destY) and not (emergencia and not hayEmergencia)):
             time.sleep(1.5)
             if active and state:
+            # if active and state and hayEmergencia == emergencia:
                 if x != destX:
                     #Is easier to go through the visible map
                     if abs(destX - x) <= MAP_COLUMNS -  abs(destX - x):
@@ -333,6 +358,8 @@ def goTo(destPos):
         lockActive.acquire()
         active = False
         lockActive.release()
+
+        lockService.release()
 
         # If arrived to customer location
         if not customerOnBoard:
@@ -531,7 +558,7 @@ def checkSensors():
 # RETURNS: True [si se ha realizado correctamente]; False si ha habido algún problema
 # NEEDS: NONE
 def authenticate(reauth=False):
-    global token, certificate, authenticated
+    global token, certificate, authenticated, broadcastCertificate
     context = ssl.SSLContext(ssl.PROTOCOL_TLSv1)
 
     conn = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -568,6 +595,7 @@ def authenticate(reauth=False):
                     print(f"[AUTHENTICATION PROCESS]: Authenticated sucessfully")
                     token = splitMessage[1]#.decode(FORMAT)
                     certificate = splitMessage[2].encode(FORMAT)
+                    broadcastCertificate = splitMessage[3].encode(FORMAT)
                     print(f"--------------> BORRAR: CLAVE RECIBIDA = {certificate}")
                     client.close()
                     authenticated = True
@@ -637,13 +665,14 @@ def register(id, password):
 def receiveMapState(mapButtons):
     while True:
         try:
-            # Kafka producer and consumer
             receiver = KafkaConsumer("Central2DEMap", bootstrap_servers=str(BROKER_IP) + ':' + str(BROKER_PORT))
-            for message in receiver:
-                decodedMessage = message.value.decode(FORMAT)
-                # print(f"Mapa recibido: {decodedMessage}")
-                translateMapMessage(decodedMessage)
-                updateMap(mapButtons)
+            if broadcastCertificate:
+                # Kafka producer and consumer
+                for message in receiver:
+                    decodedMessage = decodeIfForMe(message.value)
+                    # print(f"Mapa recibido: {decodedMessage}")
+                    translateMapMessage(decodedMessage)
+                    updateMap(mapButtons)
             
                 
         # Manage any exception ocurred
@@ -838,6 +867,7 @@ if (len(sys.argv) == 9):
     customerOnBoard = False
     registered = False
     authenticated = False
+    broadcastCertificate = False
     sensorsState = []
     sensorsIDs = []
     mapArray = []
@@ -848,6 +878,7 @@ if (len(sys.argv) == 9):
     lockCustomerOnBoard = threading.Lock()
     lockSensorsState = threading.Lock()
     lockLastMapArray = threading.Lock()
+    lockService = threading.Lock()
 
 
     for i in range(MAP_COLUMNS * MAP_ROWS):
