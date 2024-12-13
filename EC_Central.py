@@ -669,6 +669,11 @@ def checkClientConnections():
             
 ############ TAXI COMMUNICATION ############
 
+# DESCRIPTION: Crea la clave simétrica utilizada en la encriptación de los mensajes
+# dirigidos a todos los taxis y la almacena en un fichero .cert
+# STARTING_VALUES: NONE
+# RETURNS: True si se ha generado correctamente; False si ha habido algún problema
+# NEEDS: NONE
 def generateBroadcastCertificate():
     try:
 
@@ -678,7 +683,7 @@ def generateBroadcastCertificate():
         f.write(broadCastCertificate.decode(FORMAT))
         f.close()
         print(f"[BROADCAST CERITIFICATE GENERATOR] Broadcast certificate generated successfully")
-        print(broadCastCertificate)
+        return True
     except Exception as e:
         print(f"[BROADCAST CERITIFICATE GENERATOR] THERE HAS BEEN AN ERROR GENERATING BROADCAST CERTIFICATE. {e}")
         return False
@@ -697,7 +702,10 @@ def getToken(taxiID):
             return str(key)
     return False
 
-
+# DESCRIPTION: Obtiene el certificado almacenado en un determinado fichero .cert
+# STARTING_VALUES: nombre del fichero del que extraer la clave
+# RETURNS: NONE
+# NEEDS: NONE
 def getCertificateFromFile(filename):
     try:
         filePath = CERTIFICATE_FOLDER+"/"+filename
@@ -892,7 +900,7 @@ def authenticate(conn, addr):
                 token, certificate = updateSessions(taxiId)
                 broadcastCertificate = getCertificateFromFile("Broadcast.cert")
                 message = f"OK|{token}|{certificate.decode(FORMAT)}|{broadcastCertificate.decode(FORMAT)}"        # Convertimos la clave en una cadena de caracteres
-                print(f"------------------> BORRAR: CLAVE GENERADA = {certificate}")
+                # print(f"------------------> BORRAR: CLAVE GENERADA = {certificate}")
                 # message = ("OK_" + str(token) + "_").encode(FORMAT)
                 # message = message + certificate
 
