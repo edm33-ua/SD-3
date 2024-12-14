@@ -33,7 +33,7 @@ global lockState, lockActive, lockCustomerOnBoard, lockSensorsState, lockService
 global registered, authenticated, emergency, activeBeforeEmergency
 
 # Token y certificado de la sesión actual  (False si no está autenticado)
-global token, certificate, onAuthenticationLoop
+global token, certificate, onAuthenticationLoop, onAuthenticationLoopLock
 
 global mapArray, lockMapArray, lastMapArray, lockLastMapArray
 
@@ -115,6 +115,8 @@ def decodeIfForMe(message):
         return False
     except Exception as e:
         print(f"[MESSAGE DECODER] THERE HAS BEEN AN ERROR DECODING THE MESSAGE. {e}")
+        authenticated = False
+        authenticationLoop()
         return False
 
 # DESCRIPTION: Este método recibe el certificado para el taxi como cadena de caracteres (string) y lo almacena en un fichero con
@@ -637,13 +639,15 @@ def checkSensors():
 ##########  TAXI AUTHENTICATION  ##########
 
 def authenticationLoop():
-    global authenticated, onAuthenticationLoop
+    global authenticated, onAuthenticationLoop, onAuthenticationLoopLock
+    onAuthenticationLoopLock.acquire()
     if not onAuthenticationLoop:
-        onAuthenticationLoop = True
+        onAuthenticationLoop = True        
         while not authenticated:
             authenticate(reauth=True)
             time.sleep(3)
         onAuthenticationLoop = False
+    onAuthenticationLoopLock.release()
 
 
 
@@ -654,6 +658,7 @@ def authenticationLoop():
 # NEEDS: NONE
 def authenticate(reauth=False):
     global token, authenticated
+    
     context = ssl.SSLContext(ssl.PROTOCOL_TLSv1)
 
     conn = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -717,7 +722,7 @@ def authenticate(reauth=False):
 # RETURNS: -1, si ha habido un error, 0 si no se ha encontrado un taxi con los mismos parámetros, 1 si se ha podido borrar
 # NEEDS: NONE
 def leave(id, password):
-    global registered
+    global registered, authenticated
     url = 'https://' + REGISTRYIP + ':' + APIPORT + '/deleteTaxi'
     payload = {'id': str(id), 'password': str(password)}
     response = requests.post(url, json=payload, verify=False)
@@ -727,9 +732,10 @@ def leave(id, password):
         return 1
     elif response["response"] == 'KO':
         return 0
-    elif response["respnse"] == 'ERR':
+    elif response["response"] == 'ERR':
         return -1
-    
+    authenticated = False
+
 # DESCRIPTION: Da de alta al taxi, pasandole la id y password por parámetro
 # STARTING_VALUES: id del taxi, y la contraseña
 # RETURNS: -1, si ha habido un error, 0 si ya hay un taxi con esa id, 1 si se ha podido registrar correctamente
@@ -748,7 +754,7 @@ def register(id, password):
         return 1
     elif response["response"] == 'KO':
         return 0
-    elif response["respnse"] == 'ERR':
+    elif response["response"] == 'ERR':
         return -1
 
 
@@ -981,6 +987,7 @@ if (len(sys.argv) == 9):
     lockSensorsState = threading.Lock()
     lockLastMapArray = threading.Lock()
     lockService = threading.Lock()
+    onAuthenticationLoopLock = threading.Lock()
 
 
     for i in range(MAP_COLUMNS * MAP_ROWS):
