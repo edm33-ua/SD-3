@@ -113,8 +113,6 @@ def decodeIfForMe(message):
                 authenticated = False
 
         return False
-    except IndexError:
-        print("------------------>>>>>>> LIST INDEX OUT OF RANGE")
     except Exception as e:
         print(f"[MESSAGE DECODER] THERE HAS BEEN AN ERROR DECODING THE MESSAGE. {e}")
         authenticated = False
