@@ -23,6 +23,7 @@ OK = "OK".encode(FORMAT)
 KO = "KO".encode(FORMAT)
 SECONDS = 5
 APIPORT = '5000'
+CERTIFICATE_FOLDER = "TaxiCertificates/"
 #MAP_CONF_FILENAME = "./conf/cityconf.txt"
 
 global x, y, state, active, customerOnBoard, sensorsState, sensorsIDs
@@ -57,8 +58,9 @@ def calcLocation(posX, posY):
 # RETURNS: mensaje codificado en el formato token_mensajeCifrado
 # NEEDS: NONE
 def encodeMessage(originalMessage):
-    global token, certificate
+    global token
     try:
+        certificate = readCertificateOnFile()
         if token:
             f = Fernet(certificate)
             encodedMessage = f.encrypt(originalMessage.encode(FORMAT)).decode(FORMAT)
@@ -77,7 +79,7 @@ def encodeMessage(originalMessage):
 # RETURNS: mensaje descifrado con el certificado simétrico asociado a la sesión del taxi o False si no va dirigido a este taxi
 # NEEDS: NONE
 def decodeIfForMe(message):
-    global token, certificate, authenticated
+    global token, authenticated
     try:
         stringMessage = message.decode(FORMAT)
         splitMessage = stringMessage.split("|")
@@ -85,6 +87,7 @@ def decodeIfForMe(message):
         encryptedMessage = splitMessage[1].encode(FORMAT)
         # If the message is addressed to this taxi
         if destToken == token:
+            certificate = readCertificateOnFile()
             f = Fernet(certificate)
             originalMessage = f.decrypt(encryptedMessage).decode(FORMAT)
             originalMessageSections = originalMessage.split(":")
@@ -112,6 +115,34 @@ def decodeIfForMe(message):
     except Exception as e:
         print(f"[MESSAGE DECODER] THERE HAS BEEN AN ERROR DECODING THE MESSAGE. {e}")
         return False
+
+# DESCRIPTION: Este método recibe el certificado para el taxi como cadena de caracteres (string) y lo almacena en un fichero con
+# el siguiente formato de nombre: taxi_<ID>_session.cert
+# STARTING_VALUES: Certificado como cadena de caractere (string)
+# RETURNS: NONE
+# NEEDS: NONE
+def storeCertificateOnFile(certificate):
+    try:
+        filePath = f"{CERTIFICATE_FOLDER}taxi_{str(ID)}_session.cert"
+        f = open(filePath, "w")
+        f.write(certificate.decode(FORMAT))
+        f.close()
+        print(f"[CERTIFICATE HANDLER] New certificate stored successfully")
+    except Exception as e:
+        print(f"[CERTIFICATE HANDLER] THERE HAS BEEN AN ERROR STORING THE SESSION CERTIFICATE. {e}")
+    
+def readCertificateOnFile():
+    try:
+        filePath = f"{CERTIFICATE_FOLDER}taxi_{str(ID)}_session.cert"
+        f = open(filePath, "r")
+        certificate = f.readline().encode(FORMAT)
+        f.close()
+        print(f"[CERTIFICATE HANDLER] Certificate file read successfully")
+        return certificate
+    except Exception as e:
+        print(f"[CERTIFICATE HANDLER] THERE HAS BEEN AN ERROR STORING THE SESSION CERTIFICATE. {e}")
+    
+
 
 ##########  COMMUNICATION WITH CENTRAL  ##########
 
@@ -613,7 +644,7 @@ def authenticationLoop():
 # RETURNS: True [si se ha realizado correctamente]; False si ha habido algún problema
 # NEEDS: NONE
 def authenticate(reauth=False):
-    global token, certificate, authenticated, broadcastCertificate
+    global token, authenticated, broadcastCertificate
     context = ssl.SSLContext(ssl.PROTOCOL_TLSv1)
 
     conn = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -649,9 +680,8 @@ def authenticate(reauth=False):
                 if answer == "OK":
                     print(f"[AUTHENTICATION PROCESS]: Authenticated sucessfully")
                     token = splitMessage[1]#.decode(FORMAT)
-                    certificate = splitMessage[2].encode(FORMAT)
+                    storeCertificateOnFile(splitMessage[2].encode(FORMAT))
                     broadcastCertificate = splitMessage[3].encode(FORMAT)
-                    print(f"--------------> BORRAR: CLAVE RECIBIDA = {certificate}")
                     client.close()
                     authenticated = True
                     return True
