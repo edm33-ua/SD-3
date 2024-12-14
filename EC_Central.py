@@ -785,8 +785,8 @@ def encodeMessage(taxiID=False, originalMessage="", broadcastEncoding=False):
         
         if certificate:
             f = Fernet(certificate)
-            # print(originalMessage)
-            encodedMessage = f.encrypt(originalMessage.encode(FORMAT))
+            enrichedMessage = (f"{token}:{originalMessage}").encode(FORMAT)
+            encodedMessage = f.encrypt(enrichedMessage)
             finalMessage = token + "|" + encodedMessage.decode(FORMAT)
             if not broadcastEncoding:
                 print(f"[MESSAGE ENCODER] Message '{originalMessage}' encoded correctly")

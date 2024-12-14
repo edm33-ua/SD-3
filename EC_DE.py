@@ -21,7 +21,7 @@ HEADER = 1024
 ACK = "ACK".encode(FORMAT)
 OK = "OK".encode(FORMAT)
 KO = "KO".encode(FORMAT)
-SECONDS = 10
+SECONDS = 5
 APIPORT = '5000'
 #MAP_CONF_FILENAME = "./conf/cityconf.txt"
 
@@ -77,30 +77,37 @@ def encodeMessage(originalMessage):
 # RETURNS: mensaje descifrado con el certificado simétrico asociado a la sesión del taxi o False si no va dirigido a este taxi
 # NEEDS: NONE
 def decodeIfForMe(message):
-    global token, certificate
+    global token, certificate, authenticated
     try:
         stringMessage = message.decode(FORMAT)
         splitMessage = stringMessage.split("|")
         destToken = splitMessage[0]
         encryptedMessage = splitMessage[1].encode(FORMAT)
         # If the message is addressed to this taxi
-        print(f"-------RECEIVED TOKEN: {destToken}")
         if destToken == token:
             f = Fernet(certificate)
-            # print("----> MENSAJE:")
-            # print(encryptedMessage)
-            # print(certificate)
-            originalMessage = f.decrypt(encryptedMessage)
-            print(f"[MESSAGE DECODER] Message '{originalMessage.decode(FORMAT)}' decoded correctly")
-            # print("El mensaje original era:")
-            # print(originalMessage)
-            return originalMessage.decode(FORMAT)   # Devuelve en utf-8
-        # print("-.-.-.-.-.-.-.- El mensaje no era para mí")
+            originalMessage = f.decrypt(encryptedMessage).decode(FORMAT)
+            originalMessageSections = originalMessage.split(":")
+            if originalMessageSections[0] == destToken:
+                print(f"{originalMessageSections[0]} == {destToken}")
+                print(f"[MESSAGE DECODER] Message '{originalMessage}' decoded correctly")
+                return originalMessageSections[1]
+            else:
+                print(f"[MESSAGE DECODER] ERROR ON DIRECT MESSAGE DECODING: {originalMessageSections} IS NOT {destToken}")
+                authenticated = False
+        
+        # If the message is addressed to every taxi
         elif destToken == "broadcastMessage":
             f = Fernet(broadcastCertificate)
-            originalMessage = f.decrypt(encryptedMessage)
-            print(f"[MESSAGE DECODER] Broadcast message '{originalMessage.decode(FORMAT)}' decoded correctly")
-            return originalMessage.decode(FORMAT)   # Devuelve en utf-8
+            originalMessage = f.decrypt(encryptedMessage).decode(FORMAT)
+            originalMessageSections = originalMessage.split(":")
+            if originalMessageSections[0] == destToken:
+                print(f"{originalMessageSections[0]} == {destToken}")
+                return originalMessageSections[1]
+            else:
+                print(f"[MESSAGE DECODER] ERROR ON BROADCAST MESSAGE DECODING: {originalMessageSections} IS NOT {destToken}")
+                authenticated = False
+
         return False
     except Exception as e:
         print(f"[MESSAGE DECODER] THERE HAS BEEN AN ERROR DECODING THE MESSAGE. {e}")
@@ -159,9 +166,6 @@ def sendState():
                     time.sleep(0.5)
                 else:
                     print("")
-            else:
-                time.sleep(1)
-                print("No autenticado!")
     # Manage any exception ocurred
     except KeyboardInterrupt:
         print(f"[SEND STATE] CORRECTLY CLOSED")
@@ -178,6 +182,7 @@ def sendState():
 # RETURNS: NONE
 # NEEDS: NONE
 def waitForACK():
+    global authenticated
     print("ACK function")
     ackListener = None
     try:
@@ -193,10 +198,8 @@ def waitForACK():
                     break
         if not ok:
             print("[ALARM] LOST CONNECTION WITH CENTRAL CONTROL")
-            # connected = False
-            #
-            # TODO: Decide what should be done in this case
-            #
+            authenticated = False
+            authenticationLoop()
     # Manage any exception ocurred
     except Exception as e:
         print(f"[SEND STATE] AN ERROR OCURRED WHILE SENDING MY STATE: {e}")
@@ -596,6 +599,14 @@ def checkSensors():
 
 ##########  TAXI AUTHENTICATION  ##########
 
+def authenticationLoop():
+    global authenticated
+    while not authenticated:
+        authenticate(reauth=True)
+        time.sleep(3)
+
+
+
 # Connection through Sockets
 # DESCRIPTION: Sends a message to the Central Control with the taxi ID and waits for it to answer with OK or KO
 # STARTING_VALUES: NONE
@@ -718,7 +729,6 @@ def receiveMapState(mapButtons):
             if authenticated:
                 # Kafka producer and consumer
                 for message in receiver:
-                    print(f"Mensaje recibido: {message.value.decode(FORMAT)}")
                     decodedMessage = decodeIfForMe(message.value)
                     # print(f"Mapa recibido: {decodedMessage}")
                     translateMapMessage(decodedMessage)
