@@ -724,10 +724,10 @@ def authenticate(reauth=False):
 # STARTING_VALUES: id del taxi, y la contraseña
 # RETURNS: -1, si ha habido un error, 0 si no se ha encontrado un taxi con los mismos parámetros, 1 si se ha podido borrar
 # NEEDS: NONE
-def leave(id, password):
+def leave():
     global registered, authenticated
     url = 'https://' + REGISTRYIP + ':' + APIPORT + '/deleteTaxi'
-    payload = {'id': str(id), 'password': str(password)}
+    payload = {'id': str(ID), 'password': str(PASSWD)}
     response = requests.post(url, json=payload, verify=False)
     response = response.json()
     if response["response"] == 'OK':
@@ -818,45 +818,46 @@ def onMapClick(x, y):
 # RETURNS: NONE
 # NEEDS: NONE
 def updateMap(mapButtons):
-    global lockMapArray, mapArray, lastMapArray, lockLastMapArray
+    global lockMapArray, mapArray, lastMapArray, lockLastMapArray, authenticated
     try:
-        # Changing map cells' state
-        for i in range(MAP_COLUMNS):
-            for j in range(MAP_ROWS):
-                lockMapArray.acquire()
-                lockLastMapArray.acquire()
-                if mapArray[i* MAP_COLUMNS + j] != lastMapArray[i* MAP_COLUMNS + j]:
-                    lockMapArray.release()
-                    lockLastMapArray.release()
-                    print("wow")
-                    color = "white"
-                    infoText = ""
+        if authenticated:
+            # Changing map cells' state
+            for i in range(MAP_COLUMNS):
+                for j in range(MAP_ROWS):
                     lockMapArray.acquire()
-                    item = str(mapArray[i* MAP_COLUMNS + j])
-                    lockMapArray.release()
-                    
-                    if item != "#":
-                        infoText = item
-                        # Item is a location or a client
-                        if item.isalpha():
-                            # It is a location
-                            if item.isupper():
-                                color = "cyan"
-                            # It is a location
-                            elif item.islower():
-                                color = "yellow"
-                        # Item is a moving taxi
-                        elif item.isnumeric() or item.isalnum():
-                            color = "green"
-                        # Item is a broken or stopped taxi
-                        if "!" in item or "-" in item:
-                            color = "red"   
-                            if "-" in item:
-                                item.replace("-", "")
-                    mapButtons[i][j].configure(bg = color, text = infoText)
-                else:
-                    lockMapArray.release()
-                    lockLastMapArray.release()
+                    lockLastMapArray.acquire()
+                    if mapArray[i* MAP_COLUMNS + j] != lastMapArray[i* MAP_COLUMNS + j]:
+                        lockMapArray.release()
+                        lockLastMapArray.release()
+                        print("wow")
+                        color = "white"
+                        infoText = ""
+                        lockMapArray.acquire()
+                        item = str(mapArray[i* MAP_COLUMNS + j])
+                        lockMapArray.release()
+                        
+                        if item != "#":
+                            infoText = item
+                            # Item is a location or a client
+                            if item.isalpha():
+                                # It is a location
+                                if item.isupper():
+                                    color = "cyan"
+                                # It is a location
+                                elif item.islower():
+                                    color = "yellow"
+                            # Item is a moving taxi
+                            elif item.isnumeric() or item.isalnum():
+                                color = "green"
+                            # Item is a broken or stopped taxi
+                            if "!" in item or "-" in item:
+                                color = "red"   
+                                if "-" in item:
+                                    item.replace("-", "")
+                        mapButtons[i][j].configure(bg = color, text = infoText)
+                    else:
+                        lockMapArray.release()
+                        lockLastMapArray.release()
         print(f"[GUI MAP CREATOR]: Updated map.")                    
                     
         # root.after(500, lambda: updateMap(mapButtons, root))
@@ -880,6 +881,7 @@ def updateInfoGUI(mapButtons, root):
         stateInfo = stateInfo + "SIN REGISTRAR"
 
     infoLabel.config(text=stateInfo)
+    print("GUI UPDATED")
     root.after(1000, lambda: updateInfoGUI(infoLabel, root))
 
 
@@ -924,6 +926,9 @@ def createGUI(mainFrame):
 
         authenticateButton = ttk.Button(optionsFrame, text="AUTENTICAR", command=lambda: authenticate())
         authenticateButton.pack(side=tk.BOTTOM, padx=5)
+
+        signOutButton = ttk.Button(optionsFrame, text="DAR DE BAJA", command=lambda: leave())
+        signOutButton.pack(side=tk.BOTTOM, padx=5)
 
         # MAPA
 
