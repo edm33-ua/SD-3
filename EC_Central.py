@@ -566,7 +566,8 @@ def informClientAboutJourney():
                 if 'LOCATION' in decodedMessage:
                     taxiID = decodedMessage[0:2]
                     time.sleep(1)
-                    producer.send('Central2DEServiceACK', (taxiID + '_ACK').encode(FORMAT))
+                    encodedMessage = encodeMessage(originalMessage=(taxiID + '_ACK'))
+                    producer.send('Central2DEServiceACK', encodedMessage)
                     # We make sure the taxi had a client so we don't confuse it as a response for a CENTRAL CONTROL order
                     memLock.acquire()
                     value = internalMemory[taxiID]
@@ -606,7 +607,8 @@ def informClientAboutJourney():
                 elif 'DESTINATION' in decodedMessage:
                     taxiID = decodedMessage[0:2]
                     time.sleep(1)
-                    producer.send('Central2DEServiceACK', (taxiID + '_ACK').encode(FORMAT))
+                    encodedMessage = encodeMessage(originalMessage=(taxiID + '_ACK'))
+                    producer.send('Central2DEServiceACK', encodedMessage)
                     # We proceed to modify the internal memory to reflect the end of service for the taxi, as well as deleting the client
                     time.sleep(0.5)
                     memLock.acquire()
@@ -741,11 +743,11 @@ def generateBroadcastCertificate():
 # NEEDS: NONE
 def getToken(taxiID):
     global taxiSession
-    
+    lastFound = False
     for key, item in taxiSessions.items():
         if str(item) == str(taxiID):
-            return str(key)
-    return False
+            lastFound = str(key)
+    return lastFound
 
 # DESCRIPTION: Obtiene el certificado almacenado en un determinado fichero .cert
 # STARTING_VALUES: nombre del fichero del que extraer la clave
@@ -991,9 +993,18 @@ def updateSessions(taxiID):
         f = open(filePath, "w")
         f.write(certificate.decode(FORMAT))
         f.close()
+        # Remove last session entry if found
+        oldToken = getToken(taxiID)
+        
         # Store token and taxiID relation for fast access
         taxiSessions[token] = taxiID
         print(f"[SESSION MANAGER] Stored session token and certificate for {taxiID}")
+        # After a reasonable time delete the old token
+        time.sleep(3)
+
+        if oldToken:
+            del taxiSessions[oldToken]
+        
     except Exception as e:
         print(f"[SESSION MANAGER] THERE HAS BEEN AN ERROR ON ACTIVE SESSIONS REGISTRY FOR {taxiID}. {e}")
 
@@ -1055,8 +1066,8 @@ def hearTaxiStates():
                 active = decodedMessage[10:11]
                 mounted = decodedMessage[12:]
                 # We then create a thread that after a second, will send the ACK through kafka
-                message = ("ACK_" + taxiID)
-                encodedMessage = encodeMessage(taxiID, message)
+                ackMessage = ("ACK_" + taxiID)
+                encodedMessage = encodeMessage(taxiID, ackMessage)
                 threading.Timer(1, lambda: producer.send('Central2DEACK', encodedMessage)).start()
                 # Then we update the internalMemory (dictionary) for the taxi, first creating a new Taxi entity
                 memLock.acquire()
@@ -1068,6 +1079,14 @@ def hearTaxiStates():
                 connDicLock.acquire()
                 connDictionary.update({taxiID: 0})
                 connDicLock.release()
+            # If there has been an error on message decription
+            else:
+                taxiToken = message.value.decode(FORMAT).split("|")[0]
+                taxiID = taxiSessions[taxiToken]
+                answerMessage = (f"NOT_UNDERSTOOD_{taxiID}")
+                encodedMessage = encodeMessage(taxiID, answerMessage)
+                threading.Timer(1, lambda: producer.send('Central2DEACK', encodedMessage)).start()
+                producer.send
 
     except Exception as e:
         print(f"[TAXI FLEET MANAGEMENT]: THERE HAS BEEN AN ERROR WHILE HEARING TAXIS' STATES. {e}")

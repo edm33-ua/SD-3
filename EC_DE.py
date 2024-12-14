@@ -33,7 +33,7 @@ global lockState, lockActive, lockCustomerOnBoard, lockSensorsState, lockService
 global registered, authenticated, emergency, activeBeforeEmergency
 
 # Token y certificado de la sesión actual  (False si no está autenticado)
-global token, certificate, onAuthenticationLoop, onAuthenticationLoopLock
+global token, certificate, onAuthenticationLoop, onAuthenticationLoopLock, lastAckTime
 
 global mapArray, lockMapArray, lastMapArray, lockLastMapArray
 
@@ -113,6 +113,8 @@ def decodeIfForMe(message):
                 authenticated = False
 
         return False
+    except IndexError:
+        print("------------------>>>>>>> LIST INDEX OUT OF RANGE")
     except Exception as e:
         print(f"[MESSAGE DECODER] THERE HAS BEEN AN ERROR DECODING THE MESSAGE. {e}")
         authenticated = False
@@ -221,7 +223,7 @@ def sendState():
 # RETURNS: NONE
 # NEEDS: NONE
 def waitForACK():
-    global authenticated
+    global authenticated, lastAckTime
     print("ACK function")
     ackListener = None
     try:
@@ -233,12 +235,14 @@ def waitForACK():
             if decodedMessage:
                 if ID in decodedMessage:
                     ok = True
+                    lastAckTime = time.time()
                     print(f"[SEND STATE] ACK received successfully")
                     break
         if not ok:
-            print("[ALARM] LOST CONNECTION WITH CENTRAL CONTROL")
-            authenticated = False
-            authenticationLoop()
+            if time.time() - lastAckTime > 10:
+                print("[ALARM] LOST CONNECTION WITH CENTRAL CONTROL")
+                authenticated = False
+                authenticationLoop()
     # Manage any exception ocurred
     except Exception as e:
         print(f"[SEND STATE] AN ERROR OCURRED WHILE SENDING MY STATE: {e}")
@@ -657,7 +661,7 @@ def authenticationLoop():
 # RETURNS: True [si se ha realizado correctamente]; False si ha habido algún problema
 # NEEDS: NONE
 def authenticate(reauth=False):
-    global token, authenticated
+    global token, authenticated, lastAckTime
     
     context = ssl.SSLContext(ssl.PROTOCOL_TLSv1)
 
@@ -691,6 +695,7 @@ def authenticate(reauth=False):
             answer = splitMessage[0]#.decode(FORMAT)
             print("Answer = "+answer)
             if answer:
+                lastAckTime = time.time()
                 if answer == "OK":
                     print(f"[AUTHENTICATION PROCESS]: Authenticated sucessfully")
                     token = splitMessage[1]#.decode(FORMAT)
@@ -765,6 +770,7 @@ def register(id, password):
 # RETURNS: NONE
 # NEEDS: translateMapMessage
 def receiveMapState(mapButtons):
+    global lastAckTime
     try:
         receiver = KafkaConsumer("Central2DEMap", bootstrap_servers=str(BROKER_IP) + ':' + str(BROKER_PORT))
     except Exception as e:
@@ -775,10 +781,11 @@ def receiveMapState(mapButtons):
             if authenticated:
                 # Kafka producer and consumer
                 for message in receiver:
+                    lastAckTime = time.time()
                     decodedMessage = decodeIfForMe(message.value)
-                    # print(f"Mapa recibido: {decodedMessage}")
-                    translateMapMessage(decodedMessage)
-                    updateMap(mapButtons)
+                    if decodedMessage:
+                        translateMapMessage(decodedMessage)
+                        updateMap(mapButtons)
             
                 
         # Manage any exception ocurred
@@ -976,6 +983,7 @@ if (len(sys.argv) == 9):
     emergency = False
     activeBeforeEmergency = True
     onAuthenticationLoop = False
+    lastAckTime = False
     sensorsState = []
     sensorsIDs = []
     mapArray = []
