@@ -33,7 +33,7 @@ global lockState, lockActive, lockCustomerOnBoard, lockSensorsState, lockService
 global registered, authenticated, emergency, activeBeforeEmergency
 
 # Token y certificado de la sesión actual  (False si no está autenticado)
-global token, certificate, broadcastCertificate
+global token, certificate, onAuthenticationLoop
 
 global mapArray, lockMapArray, lastMapArray, lockLastMapArray
 
@@ -101,6 +101,7 @@ def decodeIfForMe(message):
         
         # If the message is addressed to every taxi
         elif destToken == "broadcastMessage":
+            broadcastCertificate = readCertificateOnFile(broadcast=True)
             f = Fernet(broadcastCertificate)
             originalMessage = f.decrypt(encryptedMessage).decode(FORMAT)
             originalMessageSections = originalMessage.split(":")
@@ -121,9 +122,11 @@ def decodeIfForMe(message):
 # STARTING_VALUES: Certificado como cadena de caractere (string)
 # RETURNS: NONE
 # NEEDS: NONE
-def storeCertificateOnFile(certificate):
+def storeCertificateOnFile(certificate, broadcast=False):
     try:
         filePath = f"{CERTIFICATE_FOLDER}taxi_{str(ID)}_session.cert"
+        if broadcast:
+            filePath = f"{CERTIFICATE_FOLDER}Broadcast.cert"
         f = open(filePath, "w")
         f.write(certificate.decode(FORMAT))
         f.close()
@@ -131,9 +134,12 @@ def storeCertificateOnFile(certificate):
     except Exception as e:
         print(f"[CERTIFICATE HANDLER] THERE HAS BEEN AN ERROR STORING THE SESSION CERTIFICATE. {e}")
     
-def readCertificateOnFile():
+def readCertificateOnFile(broadcast=False):
     try:
         filePath = f"{CERTIFICATE_FOLDER}taxi_{str(ID)}_session.cert"
+        if broadcast:
+            filePath = f"{CERTIFICATE_FOLDER}Broadcast.cert"
+       
         f = open(filePath, "r")
         certificate = f.readline().encode(FORMAT)
         f.close()
@@ -477,7 +483,7 @@ def receiveWeatherChanges():
 
     while True:
         try:
-            if broadcastCertificate:
+            if authenticated:
                 for message in receiver:
                     decodedMessage = decodeIfForMe(message.value)
                     # If weather changed from bad to good
@@ -631,10 +637,13 @@ def checkSensors():
 ##########  TAXI AUTHENTICATION  ##########
 
 def authenticationLoop():
-    global authenticated
-    while not authenticated:
-        authenticate(reauth=True)
-        time.sleep(3)
+    global authenticated, onAuthenticationLoop
+    if not onAuthenticationLoop:
+        onAuthenticationLoop = True
+        while not authenticated:
+            authenticate(reauth=True)
+            time.sleep(3)
+        onAuthenticationLoop = False
 
 
 
@@ -644,7 +653,7 @@ def authenticationLoop():
 # RETURNS: True [si se ha realizado correctamente]; False si ha habido algún problema
 # NEEDS: NONE
 def authenticate(reauth=False):
-    global token, authenticated, broadcastCertificate
+    global token, authenticated
     context = ssl.SSLContext(ssl.PROTOCOL_TLSv1)
 
     conn = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -682,6 +691,7 @@ def authenticate(reauth=False):
                     token = splitMessage[1]#.decode(FORMAT)
                     storeCertificateOnFile(splitMessage[2].encode(FORMAT))
                     broadcastCertificate = splitMessage[3].encode(FORMAT)
+                    storeCertificateOnFile(broadcastCertificate, broadcast=True)
                     client.close()
                     authenticated = True
                     return True
@@ -922,6 +932,7 @@ def createGUI(mainFrame):
                 btn.grid(row=i, column=j, padx=1, pady=1)
                 row.append(btn)
             mapButtons.append(row)
+        print(f"[GUI CREATOR]: finished GUI start")
         return infoLabel, mapButtons
     except Exception as e:
         print(f"[GUI CREATOR]: THERE HAS BEEN AN ERROR WHILE CREATING THE GUI. {e}")
@@ -956,9 +967,9 @@ if (len(sys.argv) == 9):
     customerOnBoard = False
     registered = False
     authenticated = False
-    broadcastCertificate = False
     emergency = False
     activeBeforeEmergency = True
+    onAuthenticationLoop = False
     sensorsState = []
     sensorsIDs = []
     mapArray = []
@@ -984,8 +995,7 @@ if (len(sys.argv) == 9):
         mainFrame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         # Create map of size 20x20
         infoLabel, mapButtons = createGUI(mainFrame)
-        
-        root.after(1000, lambda: updateInfoGUI(infoLabel, root))
+        root.after(8000, lambda: updateInfoGUI(infoLabel, root))
 
         ## Creating a thread for Sensor Server ##
         sensorThread = threading.Thread(target=startSensorServer)

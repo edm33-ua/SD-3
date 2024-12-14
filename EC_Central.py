@@ -26,7 +26,7 @@ FORMAT = 'utf-8'
 TABLENAMES = ['Taxis', 'Clients', 'Registry']
 LOCATION_FILE = 'EC_locations.json'
 SECONDS = 10
-CERTIFICATE_FOLDER = 'Certificates'
+CERTIFICATE_FOLDER = 'Certificates/'
 
 global dbLock, internalMemory, memLock, locationDictionary, locLock, clientMapLocation, clientLock
 global connDictionary, connDicLock
@@ -723,7 +723,7 @@ def generateBroadcastCertificate():
     try:
 
         broadCastCertificate = Fernet.generate_key()
-        filePath = CERTIFICATE_FOLDER + "/Broadcast.cert"
+        filePath = CERTIFICATE_FOLDER + "Broadcast.cert"
         f = open(filePath, "w")
         f.write(broadCastCertificate.decode(FORMAT))
         f.close()
@@ -751,9 +751,13 @@ def getToken(taxiID):
 # STARTING_VALUES: nombre del fichero del que extraer la clave
 # RETURNS: NONE
 # NEEDS: NONE
-def getCertificateFromFile(filename):
+def getCertificateFromFile(targetID):
     try:
-        filePath = CERTIFICATE_FOLDER+"/"+filename
+        certificateFile = "Broadcast.cert"
+        if targetID != "Broadcast":
+            certificateFile = f"taxi_{targetID}_session.cert"
+        
+        filePath = CERTIFICATE_FOLDER+certificateFile
         f = open(filePath, "r")
         certificate = f.readline().encode(FORMAT)
         f.close()
@@ -774,14 +778,13 @@ def encodeMessage(taxiID=False, originalMessage="", broadcastEncoding=False):
         certificate = False
         token = False
         if broadcastEncoding:
-            certificate = getCertificateFromFile("Broadcast.cert")
+            certificate = getCertificateFromFile("Broadcast")
             token = "broadcastMessage"
         else:
             taxiToken = getToken(str(taxiID).zfill(2))
             if taxiToken:
                 token = taxiToken
-                certificateFileName = f"{str(str(taxiID).zfill(2))}_{token}.cert"
-                certificate = getCertificateFromFile(certificateFileName)
+                certificate = getCertificateFromFile(str(taxiID).zfill(2))
         
         if certificate:
             f = Fernet(certificate)
@@ -812,8 +815,7 @@ def decodeMessage(message):
         encryptedMessage = splitMessage[1]
         taxiID = taxiSessions[taxiToken]
         if taxiID:
-            certificateFileName = f"{taxiID}_{taxiToken}.cert"
-            taxiCertificate = getCertificateFromFile(certificateFileName)
+            taxiCertificate = getCertificateFromFile(str(taxiID).zfill(2))
             print("CERTIFICADO:")
             print(taxiCertificate)
             f = Fernet(taxiCertificate)
@@ -946,7 +948,7 @@ def authenticate(conn, addr):
             # If the taxi accomplishes the requirements for starting a session
             if authenticationOK:
                 token, certificate = updateSessions(taxiId)
-                broadcastCertificate = getCertificateFromFile("Broadcast.cert")
+                broadcastCertificate = getCertificateFromFile("Broadcast")
                 message = f"OK|{token}|{certificate.decode(FORMAT)}|{broadcastCertificate.decode(FORMAT)}"        # Convertimos la clave en una cadena de caracteres
                 # print(f"------------------> BORRAR: CLAVE GENERADA = {certificate}")
                 # message = ("OK_" + str(token) + "_").encode(FORMAT)
@@ -984,7 +986,7 @@ def updateSessions(taxiID):
     except Exception as e:
         print(f"[SESSION MANAGER] THERE HAS BEEN AN ERROR ON TOKEN OR CERTIFICATE CREATION FOR TAXI {taxiID}. {e}")
     try:
-        filePath = f"{CERTIFICATE_FOLDER}/{taxiID}_{token}.cert"
+        filePath = f"{CERTIFICATE_FOLDER}taxi_{taxiID}_session.cert"
         # Create or overwrite the certificate file
         f = open(filePath, "w")
         f.write(certificate.decode(FORMAT))
