@@ -16,8 +16,10 @@ from secrets import token_hex
 from cryptography.fernet import Fernet
 import hashlib
 import requests
+from flask import Flask, jsonify, render_template
 
 # SERVER = "172.21.242.82"
+LOGFILE = "Central.log"
 MAP_ROWS = 20
 MAP_COLUMNS = 20
 DATABASE = 'data/database.db'
@@ -34,6 +36,7 @@ global taxiTableGlobal, selectedTaxi, selectedPos
 global clientConnections, clientConnectionsLock
 global weatherState, weatherState2
 global taxiSessions
+global frontMap
 
 ############ LOCAL CLASSES ############
 
@@ -96,7 +99,7 @@ def weatherManager():
     global weatherState, weatherState2, SERVER
     producer = KafkaProducer(bootstrap_servers=str(BROKER_IP) + ':' + str(BROKER_PORT))
     # We define the url to call
-    url = "http://" + SERVER + ":5000/getWeather"
+    url = "http://" + CTCSERVER + ":" + CTCPORT + "/getWeather"
     while True:
         # Calls the CTC API
         response = requests.get(url)
@@ -822,7 +825,7 @@ def decodeMessage(message):
 # RETURNS: NONE
 # NEEDS: NONE
 def sendMapToTaxis():
-    global internalMemory, memLock, clientMapLocation, clientLock, locationDictionary, locLock
+    global internalMemory, memLock, clientMapLocation, clientLock, locationDictionary, locLock, frontMap
 
     try:
         producer = KafkaProducer(bootstrap_servers=str(BROKER_IP) + ':' + str(BROKER_PORT))
@@ -877,6 +880,7 @@ def sendMapToTaxis():
                 if i != (MAP_COLUMNS*MAP_ROWS - 1):
                     mapString += ','
             # And send the message
+            frontMap = mapString.split(',')
             encodedMapMessage = encodeMessage(originalMessage=mapString, broadcastEncoding=True)
             producer.send('Central2DEMap', encodedMapMessage)
 
@@ -1578,14 +1582,104 @@ def updateGUI(clientTable, mapButtons, root):
     updateTables(clientTable)
     root.after(1000, lambda: updateGUI(clientTable, mapButtons, root))
 
+############ API METHODS #######################
+app = Flask(__name__)
+
+# DESCRIPTION: Método que devuelve el mapa al front end
+# STARTING_VALUES: NONE
+# RETURNS: Una lista con la situación del mapa
+# NEEDS: NONE
+@app.route('/getMap', methods=['GET'])
+def get_map():
+    global frontMap
+    return jsonify(frontMap)
+
+# DESCRIPTION: Devuelve los taxis en el Registry al front
+# STARTING_VALUES: NONE
+# RETURNS: Lista con las id de los taxis registrados
+# NEEDS: NONE
+@app.route('/getRegistry', methods=['GET'])
+def get_registry():
+    global dbLock
+    with dbLock:
+        # We connect to the database
+        conn = sqlite3.connect(DATABASE)
+        # After that, we create the cursor to handle the database
+        c = conn.cursor()
+        # And execute the order
+        c.execute("SELECT id FROM Registry")
+        ls = [item[0] for item in c.fetchall()]
+        conn.close()
+    return jsonify(ls)
+
+# DESCRIPTION: Devuelve los taxis autenticados al Front
+# STARTING_VALUES: NONE
+# RETURNS: Lista compuesta de listas con la información de los taxis autenticados
+# NEEDS: NONE
+@app.route('/getAuthenticate', methods=['GET'])
+def get_authenticate():
+    global dbLock
+    with dbLock:
+        # We connect to the database
+        conn = sqlite3.connect(DATABASE)
+        # After that, we create the cursor to handle the database
+        c = conn.cursor()
+        # And execute the order
+        c.execute("SELECT id, state, client, destination FROM Taxis")
+        ls = [[item[0], item[1] + ". " + item[2], item[3]] for item in c.fetchall()]
+        conn.close()
+    return jsonify(ls)
+
+# DESCRIPTION: Devuelve los clientes en la base de datos
+# STARTING_VALUES: NONE
+# RETURNS: Lista compuesta de listas con la información de los clientes
+# NEEDS: NONE
+@app.route('/getClients', methods=['GET'])
+def get_clients():
+    global dbLock
+    with dbLock:
+        # We connect to the database
+        conn = sqlite3.connect(DATABASE)
+        # After that, we create the cursor to handle the database
+        c = conn.cursor()
+        # And execute the order
+        c.execute("SELECT id, state, taxi, destination FROM Clients")
+        ls = [[item[0], item[1] + ". " + item[2], item[3]] for item in c.fetchall()]
+        conn.close()
+    return jsonify(ls)
+
+# DESCRIPTION: Devuelve un string con el contenido del archivo de logs
+# STARTING_VALUES: NONE
+# RETURNS: String con el contenido de logs
+# NEEDS: NONE
+@app.route('/getEvents', methods=['GET'])
+def get_events():
+    strCompleto = ""
+    read = "s"
+    file = open(LOGFILE, 'r')
+    while read:
+        read = file.readline()
+        strCompleto += read
+    return jsonify(strCompleto)
+
+# DESCRIPTION: Devuelve la página web
+# STARTING_VALUES: NONE
+# RETURNS: Página web
+# NEEDS: NONE
+@app.route('/', methods=['GET'])
+def index():
+    return render_template('index.html')
+
 ############ PROGRAM STARTING POINT ############ 
 
-if  (len(sys.argv) == 5):
+if  (len(sys.argv) == 7):
     # Argument management
     SERVER = sys.argv[1]
     PORT = int(sys.argv[2])
     BROKER_IP = sys.argv[3]
     BROKER_PORT = int(sys.argv[4])
+    CTCSERVER = sys.argv[5]
+    CTCPORT = sys.argv[6]
     # Preparing data for future uses
     ADDR = (SERVER, PORT)               # Server address 
 
@@ -1593,6 +1687,7 @@ if  (len(sys.argv) == 5):
     selectedPos = "000"
     weatherState = "GOOD"
     weatherState2 = "GOOD"
+    frontMap = ""
 
     # We initialize the internalMemory to an empty dictionary
     internalMemory = {}
@@ -1699,4 +1794,4 @@ if  (len(sys.argv) == 5):
         print(f'EXITING CENTRAL APPLICATION')
 
 else:
-    print("Sorry, incorrect parameter use\n[USAGE <LISTENING IP> <LISTENING PORT> <BROKER IP> <BROKER PORT>]")
+    print("Sorry, incorrect parameter use\n[USAGE <LISTENING IP> <LISTENING PORT> <BROKER IP> <BROKER PORT> <CTC IP> <CTC PORT>]")

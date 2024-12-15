@@ -22,7 +22,6 @@ ACK = "ACK".encode(FORMAT)
 OK = "OK".encode(FORMAT)
 KO = "KO".encode(FORMAT)
 SECONDS = 10
-APIPORT = '5000'
 #MAP_CONF_FILENAME = "./conf/cityconf.txt"
 
 global x, y, state, active, customerOnBoard, sensorsState, sensorsIDs
@@ -666,7 +665,7 @@ def authenticate(reauth=False):
 # NEEDS: NONE
 def leave(id, password):
     global registered
-    url = 'https://' + REGISTRYIP + ':' + APIPORT + '/deleteTaxi'
+    url = 'https://' + REGISTRYIP + ':' + REGISTRYPORT + '/deleteTaxi'
     payload = {'id': str(id), 'password': str(password)}
     response = requests.post(url, json=payload, verify=False)
     response = response.json()
@@ -684,7 +683,7 @@ def leave(id, password):
 # NEEDS: NONE
 def register(id, password):
     global registered
-    url = 'https://' + REGISTRYIP + ':' + APIPORT + '/addTaxi'
+    url = 'https://' + REGISTRYIP + ':' + REGISTRYPORT + '/addTaxi'
     payload = {'id': str(id), 'password': str(password)}
     print("eyeye1")
     response = requests.post(url, json=payload, verify=False)
@@ -901,12 +900,12 @@ if (len(sys.argv) == 9):
     PASSWD = str(sys.argv[6])
     SERVER = sys.argv[7]
     PORT = int(sys.argv[8])
+    REGISTRYIP = sys.argv[9]
+    REGISTRYPORT = sys.argv[9]
     # Preparing data for future uses
     ADDR = (SERVER, PORT)
     EC_CENTRAL_ADDR = (EC_CENTRAL_IP, EC_CENTRAL_PORT)
     BROKER_ADDR = (BROKER_IP, BROKER_PORT)
-    REGISTRYIP = sys.argv[1]
-    
 
     x = y = 0
     token = False
@@ -984,4 +983,5 @@ if (len(sys.argv) == 9):
         print(f'EXITING DIGITAL ENGINE APPLICATION')
 
 else:
-    print("SORRY, INCORRECT PARAMETER USE. \nUSAGE: <EC_CENTRAL IP> <EC_CENTRAL PORT> <BROKER IP> <BROKER PORT> <TAXI ID> <PASSWORD> <LISTENING_IP_SENSORS> <LISTENING_PORT_SENSORS>")
+    print("SORRY, INCORRECT PARAMETER USE. \nUSAGE: <EC_CENTRAL IP> <EC_CENTRAL PORT> <BROKER IP> <BROKER PORT> <TAXI ID> <PASSWORD>\n"+
+          +"<LISTENING_IP_SENSORS> <LISTENING_PORT_SENSORS> <REGISTRY IP> <REGISTRY PORT>")

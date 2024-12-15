@@ -2,6 +2,7 @@ from flask import Flask, request, jsonify
 import requests
 import threading
 import tkinter as tk
+import sys
 
 # El documento con la KEY para usar OpenWeather
 weatherKeyFile = "OpenWeatherKey.txt"
@@ -119,9 +120,10 @@ def callOpenWeather():
                 return 'KO'
         else:
             print("[OPENWEATHER CALLER] The selected city is invalid")
-            return 'ERR'
+            return 'KO'
     except Exception as e:
         print(f'[OPENWEATHER CALLER] THERE HAS BEEN AN ERROR WHILE CALLING THE OPENWEATHER API. {e}')
+        return 'KO'
 
 ################  API DEFINITION  ################
 
@@ -140,16 +142,21 @@ def getWeather():
 #########  MAIN STARTING POINT  #########
 if __name__ == '__main__':
 
-    # We create the thread for the city menu
-    thread=threading.Thread(target=changeCitySystem)
-    thread.daemon = True
-    thread.start()
+    if len(sys.argv) == 2:
 
-    # We begin running the API
-    try:
-        app.run(host='0.0.0.0', port=5000)
-    except KeyboardInterrupt:
-        print(f"[APP HANDLER] APPLICATION ENDED DUE TO HUMAN INTERACTION")
-    except Exception as e:
-        print(f"[APP HANDLER] THERE HAS BEEN AN ERROR WHILE RUNNING THE APP. {e}")
-    
+        PORT = int(sys.argv[1])
+        
+        # We create the thread for the city menu
+        thread=threading.Thread(target=changeCitySystem)
+        thread.daemon = True
+        thread.start()
+
+        # We begin running the API
+        try:
+            app.run(host='0.0.0.0', port=PORT)
+        except KeyboardInterrupt:
+            print(f"[APP HANDLER] APPLICATION ENDED DUE TO HUMAN INTERACTION")
+        except Exception as e:
+            print(f"[APP HANDLER] THERE HAS BEEN AN ERROR WHILE RUNNING THE APP. {e}")
+    else:
+        print("Sorry, incorrect parameter use\n[USAGE <LISTENING PORT>]")

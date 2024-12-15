@@ -3,6 +3,7 @@ import threading
 import tkinter as tk
 import sqlite3
 import hashlib
+import sys
 
 ################ PATHS/CONSTANTS  ################
 
@@ -129,10 +130,17 @@ def deleteTaxi():
     
 #########  MAIN STARTING POINT  #########
 if __name__ == '__main__':
-    # We check for the DB
-    checkRegistryTableDB()
-    # We begin running the application
-    try:
-        app.run(port=5000, ssl_context=(Certificate, Key), host='0.0.0.0')
-    except Exception as e:
-        print(f'[APPLICATION HANDLER] THERE HAS BEEN AN ERROR WHILE HANDLING THE APPLICATION. {e}')
+
+    if len(sys.argv) == 2:
+
+        PORT = int(sys.argv[1])
+        
+        # We check for the DB
+        checkRegistryTableDB()
+        # We begin running the application
+        try:
+            app.run(port=PORT, ssl_context=(Certificate, Key), host='0.0.0.0')
+        except Exception as e:
+            print(f'[APPLICATION HANDLER] THERE HAS BEEN AN ERROR WHILE HANDLING THE APPLICATION. {e}')
+    else:
+        print("Sorry, incorrect parameter use\n[USAGE <LISTENING PORT>]")
