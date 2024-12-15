@@ -20,7 +20,6 @@ from datetime import datetime
 from flask import Flask, jsonify, render_template
 
 # SERVER = "172.21.242.82"
-LOGFILE = "Central.log"
 MAP_ROWS = 20
 MAP_COLUMNS = 20
 DATABASE = 'data/database.db'
@@ -119,12 +118,12 @@ def weatherManager():
                 # Enviar el GOODWEATHER
                 encodedMessage = encodeMessage(originalMessage='GOODWEATHER', broadcastEncoding=True)
                 producer.send('Central2DEWeather', encodedMessage)
-                addToLogFile(f"[WEATHER MANAGER] The sun shines again!")
+                addToLogFile(f"[WEATHER MANAGER] The sun shines again!", causingID=CTCSERVER, directlyIP=True)
             else:
                 # Enviar el BADWEATHER
                 encodedMessage = encodeMessage(originalMessage='BADWEATHER', broadcastEncoding=True)
                 producer.send('Central2DEWeather', encodedMessage)
-                addToLogFile(f"[WEATHER MANAGER] A storm approaches...")
+                addToLogFile(f"[WEATHER MANAGER] A storm approaches...", causingID=CTCSERVER, directlyIP=True)
         # Equals the before state to the current state
         weatherState = weatherState2
         time.sleep(10)
@@ -559,7 +558,7 @@ def hearClientPetitions():
                 # Storing the customer's IP address 
                 IPsForIDs[clientID] = str(splitMessage[4])
                 # There was no taxi available
-                if taxiForUser is None:
+                if taxiForUser is None or weatherState == "BAD":
                     # We send the petition response
                     threading.Timer(1, lambda: producer.send('Central2CustomerInformation', (clientID + '_KO').encode(FORMAT))).start()
                     # Adding client to pending ACK dictionary
@@ -615,7 +614,7 @@ def hearClientPetitions():
                             clientLock.release()
                             # We then send the taxi to the location where the user is
                             addToLogFile(f'[CLIENT MANAGER] Sending taxi {taxiForUser} to client {clientID}', causingID=taxiForUser)
-                            sendTaxiToLocation(clientLocation, taxiForUser)
+                            sendTaxiToLocation(clientLocation, taxiForUser, client=True)
                             answer = True
                             break
                     if answer:
@@ -680,7 +679,7 @@ def informClientAboutJourney():
                                 locLock.release()
                                 memLock.release()
                                 clientLock.release()
-                                sendTaxiToLocation(destination, taxiID)
+                                sendTaxiToLocation(destination, taxiID, client=True)
                                 answer = True
                                 break
                         # If the client has answered us, we skip the resilience bit
@@ -1006,7 +1005,7 @@ def authenticate(conn, addr):
             # If taxi is asking for a new session
             if authType == "auth":
                 # Check if taxi is registered
-                if findInRegistry(taxiId, passwd):
+                if findInRegistry(taxiId, passwd) > 0:
                     # Check if the taxi has an active session
                     if not findTaxiID(taxiId):
                         authenticationOK = True
@@ -1299,12 +1298,15 @@ def informTaxiAboutMountOrDismount(string, taxiID):
 # STARTING_VALUES: localización destino, taxi al que se envía
 # RETURNS: NONE
 # NEEDS: NONE
-def sendTaxiToLocation(location, taxiID):
+def sendTaxiToLocation(location, taxiID, client=False):
     try:
         producer = KafkaProducer(bootstrap_servers=str(BROKER_IP) + ':' + str(BROKER_PORT))
         consumer = KafkaConsumer('DE2CentralACK', bootstrap_servers=str(BROKER_IP) + ':' + str(BROKER_PORT), consumer_timeout_ms = 5000)
         # Encriptación y envío del mensaje 
-        encodedOrderMessage = encodeMessage(taxiID, (str(taxiID).zfill(2) + "_GO_" + str(location).zfill(3)))
+        if client:
+            encodedOrderMessage = encodeMessage(taxiID, (str(taxiID).zfill(2) + "_GO_" + str(location).zfill(3)) + "_CLIENT")
+        else:
+            encodedOrderMessage = encodeMessage(taxiID, (str(taxiID).zfill(2) + "_GO_" + str(location).zfill(3)))
         producer.send("Central2DEOrder", encodedOrderMessage)
         addToLogFile(f'[SEND TAXI TO LOCATION] Sending taxi {taxiID} to location {str(location).zfill(3)}', causingID="self")
         # We make a boolean to know if it has answered us
@@ -1409,6 +1411,31 @@ def goLocation():
 
 ############ GRAPHICAL USER INTERFACE ############ 
 
+# DESCRIPTION: Genera la interfaz gráfica interactiva de la central
+# STARTING_VALUES: NONE
+# RETURNS: NONE
+# NEEDS: NONE
+def createGUI():
+    try:
+        global taxiTableGlobal
+        # Graphical User Interface
+        root = tk.Tk()
+        root.title("EasyCab Central Control Panel")
+        mainFrame = ttk.Frame(root, padding="10")
+        mainFrame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        # Create tables for taxi and customer
+        clientTable = createTables(mainFrame)
+        # Create map of size 20x20
+        mapButtons = createMap(mainFrame)
+        
+        root.after(1000, lambda: updateGUI(clientTable, mapButtons, root))
+
+        root.mainloop() 
+    except Exception as e:
+        addToLogFile(f"[GUI CREATOR]: THERE HAS BEEN AN ERROR WHILE CREATING THE GUI. {e}", causingID="self")
+
+
+
 # DESCRIPTION: Almacena en selectedPos la posición del mapa seleccionada
 # STARTING_VALUES: Frame principal de la interfaz gráfica
 # RETURNS: el mapa, en forma de matriz de botones
@@ -1459,7 +1486,7 @@ def selectItem(a):
 # STARTING_VALUES: frame principal de la pantalla
 # RETURNS: NONE
 # NEEDS: goBase(), goLocation(), resumeTaxi(), stopTaxi(), onMapClick()
-def createTables(mainframe):
+def createTables(mainFrame):
     global taxiTableGlobal
     try:
         # Frame para las tablas
@@ -1625,7 +1652,7 @@ def updateMap(mapButtons):
 # RETURNS: NONE
 # NEEDS: NONE
 def updateTables(clientTable):
-    global internalMemory, memLock, locationDictionary, locLock
+    global internalMemory, memLock, locationDictionary, locLock, taxiTableGlobal
     try:
         # Clean tables
         for item in taxiTableGlobal.get_children():
@@ -1765,7 +1792,7 @@ def get_clients():
 def get_events():
     strCompleto = ""
     read = "s"
-    file = open(LOGFILE, 'r')
+    file = open(LOGS_FILE_PATH, 'r')
     while read:
         read = file.readline()
         strCompleto += read
@@ -1781,7 +1808,7 @@ def index():
 
 ############ PROGRAM STARTING POINT ############ 
 
-if  (len(sys.argv) == 7):
+if  (len(sys.argv) == 8):
     # Argument management
     SERVER = sys.argv[1]
     PORT = int(sys.argv[2])
@@ -1789,8 +1816,10 @@ if  (len(sys.argv) == 7):
     BROKER_PORT = int(sys.argv[4])
     CTCSERVER = sys.argv[5]
     CTCPORT = sys.argv[6]
+    API_PORT = sys.argv[7]
     # Preparing data for future uses
     ADDR = (SERVER, PORT)               # Server address 
+    
 
     selectedTaxi = None
     selectedPos = "000"
@@ -1814,6 +1843,8 @@ if  (len(sys.argv) == 7):
     clientConnectionsLock = threading.Lock()
     connDicLock = threading.Lock()
     logFileLock = threading.Lock()
+
+    taxiTableGlobal = False
     
     try: 
         # Try to create a new log file
@@ -1875,19 +1906,14 @@ if  (len(sys.argv) == 7):
         sendMapThread.daemon = True
         sendMapThread.start()
 
-        # Graphical User Interface
-        root = tk.Tk()
-        root.title("EasyCab Central Control Panel")
-        mainFrame = ttk.Frame(root, padding="10")
-        mainFrame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
-        # Create tables for taxi and customer
-        clientTable = createTables(mainFrame)
-        # Create map of size 20x20
-        mapButtons = createMap(mainFrame)
+        # We create a thread that sends the map situation to the taxis
+        createGUIThread = threading.Thread(target=createGUI)
+        createGUIThread.daemon = True
+        createGUIThread.start()
         
-        root.after(1000, lambda: updateGUI(clientTable, mapButtons, root))
 
-        root.mainloop() 
+        app.run(host="0.0.0.0", port=int(API_PORT))
+        
 
     except KeyboardInterrupt:
         addToLogFile('[CENTRAL CONTROL] Application shutdown due to human interaction', causingID="self")
@@ -1897,4 +1923,4 @@ if  (len(sys.argv) == 7):
         addToLogFile(f'EXITING CENTRAL APPLICATION', causingID="self")
 
 else:
-    print("Sorry, incorrect parameter use\n[USAGE <LISTENING IP> <LISTENING PORT> <BROKER IP> <BROKER PORT> <CTC IP> <CTC PORT>]")
+    print("Sorry, incorrect parameter use\n[USAGE <LISTENING IP> <LISTENING PORT> <BROKER IP> <BROKER PORT> <CTC IP> <CTC PORT> <API PORT>]")

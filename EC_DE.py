@@ -305,10 +305,16 @@ def receiveInstructions():
                         encodedAckMessage = encodeMessage(f"ACK_{ID}")                        
                         answerManager.send("DE2CentralACK", encodedAckMessage)
                         
-                        # Start the way to the destination
-                        goToThread = threading.Thread(target=goTo, args=(location, ))
-                        goToThread.daemon = True
-                        goToThread.start()
+                        if "CLIENT" in decodedMessage:
+                            # Start the way to the destination
+                            goToThread = threading.Thread(target=goTo, args=(location, False, True ))
+                            goToThread.daemon = True
+                            goToThread.start()
+                        else: 
+                            # Start the way to the destination
+                            goToThread = threading.Thread(target=goTo, args=(location, ))
+                            goToThread.daemon = True
+                            goToThread.start()
                         # else:
                         #     print(f"[COMMUNICATION] Asked to go to {location}. But already on another service")
     # Manage any exception ocurred
@@ -326,14 +332,15 @@ def receiveInstructions():
 # STARTING_VALUES: Posición de destino
 # RETURNS: NONE
 # NEEDS: decipherPos()
-def goTo(destPos, prioritary=False):
-    global x, y, active, state, lockActive, customerOnBoard, emergency
+def goTo(destPos, prioritary=False, client=False):
+    global x, y, active, state, lockActive, customerOnBoard, emergency, activeBeforeEmergency
     try:
         producer = KafkaProducer(bootstrap_servers=str(BROKER_IP) + ':' + str(BROKER_PORT))
         ackListener = KafkaConsumer("Central2DEServiceACK", bootstrap_servers=str(BROKER_IP)+':'+str(BROKER_PORT), consumer_timeout_ms=SECONDS*1000)
         destX, destY = decipherPos(destPos)
-
-        lockService.acquire()
+        
+        if not prioritary:
+            lockService.acquire()
 
         lockActive.acquire()
         active = True
@@ -342,6 +349,8 @@ def goTo(destPos, prioritary=False):
         # while ((x != destX or y != destY)):
         while ((x != destX or y != destY) and not (prioritary and not emergency)):
             time.sleep(1.5)
+            # if not emergency and not prioritary:
+            #     active = True
             # if active and state:
             if active and state and prioritary == emergency:
                 if x != destX:
@@ -390,10 +399,10 @@ def goTo(destPos, prioritary=False):
         lockActive.acquire()
         active = False
         lockActive.release()
-
-        lockService.release()
-
         if not prioritary:
+            lockService.release()
+
+        if not client:
             # If arrived to customer location
             if not customerOnBoard:
                 answered = False
@@ -479,7 +488,7 @@ def resume():
     
 
 def receiveWeatherChanges():
-    global active, activeBeforeEmergency
+    global active, activeBeforeEmergency, emergency
     try:
         receiver = KafkaConsumer("Central2DEWeather", bootstrap_servers=str(BROKER_IP) + ':' + str(BROKER_PORT))
     except Exception as e:
@@ -489,29 +498,29 @@ def receiveWeatherChanges():
         try:
             if authenticated:
                 for message in receiver:
+                    print("------------<--<-<-<-<- RECIBIDO MENSAJE DE WEATHER")
+                    print(message)
                     decodedMessage = decodeIfForMe(message.value)
-                    # If weather changed from bad to good
-                    if "GOODWEATHER" in decodedMessage:
-                        print(f"[WEATHER RECEIVER] Received weather is OK. Resuming services")
-                        active = activeBeforeEmergency
+                    if decodedMessage:
+                        # If weather changed from bad to good
+                        if "GOODWEATHER" in decodedMessage:
+                            print(f"[WEATHER RECEIVER] Received weather is OK. Resuming services")
+                            active = activeBeforeEmergency
+                            emergency = False
 
-                    # If weather changed from good to bad
-                    elif "BADWEATHER" in decodedMessage:
-                        print(f"[WEATHER RECEIVER] WARNING: Received weather is KO. Returning to Base")
-                        activeBeforeEmergency = active
-                        emergencyGoToThread = threading.Thread(target=goTo, args=("000", True))
-                        emergencyGoToThread.daemon = True
-                        emergencyGoToThread.start()
-
-                        
-
-            
-                
+                        # If weather changed from good to bad
+                        elif "BADWEATHER" in decodedMessage:
+                            print(f"[WEATHER RECEIVER] WARNING: Received weather is KO. Returning to Base")
+                            activeBeforeEmergency = active
+                            emergency = True
+                            emergencyGoToThread = threading.Thread(target=goTo, args=("000", True))
+                            emergencyGoToThread.daemon = True
+                            emergencyGoToThread.start()                
         # Manage any exception ocurred
         except Exception as e:
-            print(f"[MAP RECEIVER] THERE HAS BEEN AN ERROR WHILE RECEIVING MAP STATE INFORMATION. {e}")
-        finally:
+            print(f"[WEATHER RECEIVER] THERE HAS BEEN AN ERROR WHILE RECEIVING SOME IMPORTANT WEATHER INFORMATION. {e}")
             receiver.close()
+            
 
 
 ##########  SENSOR MANAGEMENT  ##########
@@ -726,7 +735,7 @@ def authenticate(reauth=False):
 # NEEDS: NONE
 def leave(id, password):
     global registered
-    url = 'https://' + REGISTRYIP + ':' + APIPORT + '/deleteTaxi'
+    url = 'https://' + REGISTRYIP + ':' + REGISTRYPORT + '/deleteTaxi'
     payload = {'id': str(id), 'password': str(password)}
     response = requests.post(url, json=payload, verify=False)
     response = response.json()
@@ -927,7 +936,7 @@ def createGUI(mainFrame):
         authenticateButton = ttk.Button(optionsFrame, text="AUTENTICAR", command=lambda: authenticate())
         authenticateButton.pack(side=tk.BOTTOM, padx=5)
 
-        signOutButton = ttk.Button(optionsFrame, text="DAR DE BAJA", command=lambda: leave())
+        signOutButton = ttk.Button(optionsFrame, text="DAR DE BAJA", command=lambda: leave(ID, PASSWD))
         signOutButton.pack(side=tk.BOTTOM, padx=5)
 
         # MAPA
@@ -958,7 +967,7 @@ def createGUI(mainFrame):
 
 ########## STARTING POINT OF MAIN APPLICATION ##########
 
-if (len(sys.argv) == 9):
+if (len(sys.argv) == 11):
     # Argument management
     EC_CENTRAL_IP = sys.argv[1]
     EC_CENTRAL_PORT = int(sys.argv[2])
@@ -969,7 +978,7 @@ if (len(sys.argv) == 9):
     SERVER = sys.argv[7]
     PORT = int(sys.argv[8])
     REGISTRYIP = sys.argv[9]
-    REGISTRYPORT = sys.argv[9]
+    REGISTRYPORT = sys.argv[10]
     # Preparing data for future uses
     ADDR = (SERVER, PORT)
     EC_CENTRAL_ADDR = (EC_CENTRAL_IP, EC_CENTRAL_PORT)
@@ -1038,6 +1047,14 @@ if (len(sys.argv) == 9):
         receiveMapStateThread.daemon = True
         receiveMapStateThread.start()
 
+
+        ## Creating a thread for receiving weather change advises from Central Control ##
+        receiveMapStateThread = threading.Thread(target=receiveWeatherChanges)
+        receiveMapStateThread.daemon = True
+        receiveMapStateThread.start()
+
+        
+
             
         root.mainloop()
         
@@ -1052,5 +1069,4 @@ if (len(sys.argv) == 9):
         print(f'EXITING DIGITAL ENGINE APPLICATION')
 
 else:
-    print("SORRY, INCORRECT PARAMETER USE. \nUSAGE: <EC_CENTRAL IP> <EC_CENTRAL PORT> <BROKER IP> <BROKER PORT> <TAXI ID> <PASSWORD>\n"+
-          +"<LISTENING_IP_SENSORS> <LISTENING_PORT_SENSORS> <REGISTRY IP> <REGISTRY PORT>")
+    print("SORRY, INCORRECT PARAMETER USE. \nUSAGE: <EC_CENTRAL IP> <EC_CENTRAL PORT> <BROKER IP> <BROKER PORT> <TAXI ID> <PASSWORD>\n <LISTENING_IP_SENSORS> <LISTENING_PORT_SENSORS> <REGISTRY IP> <REGISTRY PORT>")
