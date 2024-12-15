@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="es">
+    <head>
+        <meta charset="UTF-8">
+        <title>SDEasy Cab Release 2</title>
+        <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+        <style>
+            /* Contenedor del grid */
+            .map-container {
+                display: grid;
+                grid-template-columns: repeat(20, 1fr); /* 20 columnas */
+                grid-gap: 2px;
+                width: 500px; /* Ajusta el ancho según prefieras */
+                padding-right: 5%;
+                padding-top: 3%;
+            }
+
+            /* Cada celda */
+            .map-item {
+                width: 100%; /* Para que sea proporcional dentro del grid */
+                aspect-ratio: 1; /* Cuadrado */
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                font-size: 14px;
+            }
+
+            .empty {
+                background-color: lightgray;
+            }
+
+            .location {
+                background-color: #86d4e3;
+            }
+
+            .client {
+                background-color: #f2dc8a;
+            }
+
+            .moving {
+                background-color: #94e092;
+            }
+
+            .stopped {
+                background-color: #c44b67;
+            }
+
+            h1 {
+                color: black;
+                size: 40px;
+                text-align: center;
+            }
+
+            h2 {
+                color: black;
+                size: 20px;
+                text-align: center;
+            }
+
+            table {
+                border-collapse: collapse;
+                width: 50%;
+                text-align: center;
+                table-layout: fixed;
+                margin-left: 25%;
+            }
+
+            th, td {
+                border: 1px solid #ccc;
+                padding: 10px;
+            }
+
+            #app-wrapper {
+                display: flex;
+                flex-direction: row;
+            }
+
+            #right-panel {
+                margin-left: auto;
+                justify-content: center;
+                border-style: none;
+                border-radius: 10px;
+                max-height: 500px;
+                margin-bottom: 30px;
+            }
+
+            #left-panel {
+                display: flex;
+                flex-direction: column;
+                justify-content: center;
+                width: 50%;
+                border-style: none; 
+                border-radius: 10px;
+                margin-top: 3%;
+                overflow: auto;
+            }
+
+            #right-wrapper {
+                margin-left: auto;
+                display: flex;
+                flex-direction: column;
+                margin-right: 100px;
+
+            }
+
+            #console {
+                overflow: auto;
+                height: 100px;
+                width: 500px;
+                border: 2px solid black;
+            }
+
+            .map-title {
+                margin-top: 125px;
+            }
+
+        </style>
+    </head>
+    <body>
+        <!-- Contenido estático de la aplicación-->
+        <h1 id="main-title">Estado de la aplicación</h1>
+        <div id="app-wrapper">
+            <div id="left-panel">
+                <div id="registry-container">
+                    <h2>Taxis registrados</h2>
+                    <table id="registry-table">
+                    </table>
+                </div>
+                <div id="authenticate-container">
+                    <h2>Taxis autenticados</h2>
+                    <table id="authenticate-table">
+                    </table>
+                </div>
+                <div id="clients-container">
+                    <h2>Clientes</h2>
+                    <table id="clients-table">
+                    </table>
+                </div>
+            </div>
+            <div id="right-wrapper">
+                <h2 class="map-title">Mapa</h2>
+                <div id="right-panel" class="map-container"></div>
+                <h2>Informe de eventos</h2>
+                <div id="console"></div>
+            </div>
+        </div>
+
+        <!-- Sección con las funciones y el dinamismo de la aplicación -->
+        <script>
+            
+            // Funciones para hacer comprobaciones
+            function hasChar(str, char) {
+                const regex = new RegExp(char); // Crea una regex dinámica con el carácter
+                return regex.test(str);
+            }
+
+            function isLower(str) {
+                const regex = /^[a-z]+$/; // Tiene solo letras minúsculas
+                return regex.test(str);
+            }
+
+            function isUpper(str) {
+                const regex = /^[A-Z]+$/; // Tiene solo letras mayúsculas?
+                return regex.test(str);
+            }
+
+            function getMap() {
+                $.get('/getMap', function(data) {
+                    // Limpiamos el mapa
+                    $('#right-panel').empty();
+                    // Y lo volvemos a crear
+                    data.forEach(function(item){
+                        if(item == "#") {
+                            $('#right-panel').append(`<div class="map-item empty"></div>`);
+                        } else if (isLower(item)) {
+                            $('#right-panel').append(`<div class="map-item client">${item}</div>`);
+                        } else if (isUpper(item)){
+                            $('#right-panel').append(`<div class="map-item location">${item}</div>`);
+                        } else if (hasChar(item, "-") || hasChar(item, "!")) {
+                            $('#right-panel').append(`<div class="map-item stopped">${item}</div>`);
+                        } else {
+                            $('#right-panel').append(`<div class="map-item moving">${item}</div>`);
+                        }
+                    });
+                });
+            }            
+            
+            function getRegistry() {
+                $.get('/getRegistry', function(data){
+                    $('#registry-table').empty()
+                    $('#registry-table').append(`<tr><th>ID</th></tr>`)
+                    data.forEach(function(item) {
+                        $('#registry-table').append(`<tr><td>${item}</td></tr>`)
+                    });
+                });
+            }
+
+            function getAuthenticate() {
+                $.get('/getAuthenticate', function(data){
+                    $('#authenticate-table').empty()
+                    $('#authenticate-table').append(`<tr><th>ID</th><th>Estado</th><th>Destino</th></tr>`)
+                    data.forEach(function(item) {
+                        const newRow = $('<tr>');
+                        item.forEach(function(item2){
+                            newRow.append(`<td>${item2}</td>`)
+                        });
+                        $('#authenticate-table').append(newRow)
+                    });
+                });
+            }
+
+            function getClients() {
+                $.get('/getClients', function(data){
+                    $('#clients-table').empty()
+                    $('#clients-table').append(`<tr><th>ID</th><th>Estado</th><th>Destino</th></tr>`)
+                    data.forEach(function(item) {
+                        const newRow = $('<tr>');
+                        item.forEach(function(item2){
+                            newRow.append(`<td>${item2}</td>`)
+                        });
+                        $('#clients-table').append(newRow)
+                    });
+                });
+            }
+
+            function getEvents() {
+                $.get('/getEvents', function(data) {
+                    $('#console').empty()
+                    $('#console').append(`<p>${data}</p>`)
+                });
+            }
+
+            function doAll() {
+                getMap();
+                getRegistry();
+                getAuthenticate();
+                getClients();
+                getEvents();
+            }
+
+            $(document).ready(function() {
+                doAll();
+                setInterval(doAll, 1000);
+            });
+        </script>
+    </body>
+</html>
