@@ -105,7 +105,7 @@ def askForTaxi(destination):
         while not answered:
             # We ask for a taxi through the kafka producer
             print(f'[PETITION MANAGEMENT] Asking Central Control for a service to {destination}')
-            producer.send('Customer2CentralPetitions', (CLIENT_ID + '_ASK_' + currentPosition.zfill(3) + "_" + destination).encode(FORMAT))
+            producer.send('Customer2CentralPetitions', (CLIENT_ID + '_ASK_' + currentPosition.zfill(3) + "_" + destination + "_" + SERVER_IP).encode(FORMAT))
             state = "Taxi pedido"
             print("Petición enviada")
             # For each message that has arrived since we've created the kafka consumer, we will check if it has
@@ -203,12 +203,13 @@ def updateGUI(root, infoLabel, stateLabel):
 ##  Program starting point  #
 #############################
 
-if len(sys.argv) == 5:
+if len(sys.argv) == 6:
         # Argument handling
         BROKER_IP = sys.argv[1]
         BROKER_PORT = sys.argv[2]
         CLIENT_ID = sys.argv[3]
         INITIAL_POSITION = str(sys.argv[4]).zfill(3)
+        SERVER_IP = str(sys.argv[5])
 
         currentPosition = INITIAL_POSITION
 
@@ -242,4 +243,4 @@ if len(sys.argv) == 5:
 
 else:
     # We print the correct parameters to use
-    print("SORRY, INCORRECT PARAMETER USE. \nUSAGE: <BROKER_IP> <BROKER_PORT> <CLIENT_ID> <IDPOS_OF_INITIAL_LOCATION>")
+    print("SORRY, INCORRECT PARAMETER USE. \nUSAGE: <BROKER_IP> <BROKER_PORT> <CLIENT_ID> <IDPOS_OF_INITIAL_LOCATION> <IP_FOR_THE_CUSTOMER>")
