@@ -21,7 +21,9 @@ HEADER = 1024
 ACK = "ACK".encode(FORMAT)
 OK = "OK".encode(FORMAT)
 KO = "KO".encode(FORMAT)
-SECONDS = 10
+SECONDS = 5
+APIPORT = '5000'
+CERTIFICATE_FOLDER = "TaxiCertificates/"
 #MAP_CONF_FILENAME = "./conf/cityconf.txt"
 
 global x, y, state, active, customerOnBoard, sensorsState, sensorsIDs
@@ -31,7 +33,7 @@ global lockState, lockActive, lockCustomerOnBoard, lockSensorsState, lockService
 global registered, authenticated, emergency, activeBeforeEmergency
 
 # Token y certificado de la sesión actual  (False si no está autenticado)
-global token, certificate, broadcastCertificate
+global token, certificate, onAuthenticationLoop, onAuthenticationLoopLock, lastAckTime
 
 global mapArray, lockMapArray, lastMapArray, lockLastMapArray
 
@@ -56,8 +58,9 @@ def calcLocation(posX, posY):
 # RETURNS: mensaje codificado en el formato token_mensajeCifrado
 # NEEDS: NONE
 def encodeMessage(originalMessage):
-    global token, certificate
+    global token
     try:
+        certificate = readCertificateOnFile()
         if token:
             f = Fernet(certificate)
             encodedMessage = f.encrypt(originalMessage.encode(FORMAT)).decode(FORMAT)
@@ -76,7 +79,7 @@ def encodeMessage(originalMessage):
 # RETURNS: mensaje descifrado con el certificado simétrico asociado a la sesión del taxi o False si no va dirigido a este taxi
 # NEEDS: NONE
 def decodeIfForMe(message):
-    global token, certificate
+    global token, authenticated
     try:
         stringMessage = message.decode(FORMAT)
         splitMessage = stringMessage.split("|")
@@ -84,25 +87,70 @@ def decodeIfForMe(message):
         encryptedMessage = splitMessage[1].encode(FORMAT)
         # If the message is addressed to this taxi
         if destToken == token:
+            certificate = readCertificateOnFile()
             f = Fernet(certificate)
-            # print("----> MENSAJE:")
-            # print(encryptedMessage)
-            # print(certificate)
-            originalMessage = f.decrypt(encryptedMessage)
-            print(f"[MESSAGE DECODER] Message '{originalMessage}' decoded correctly")
-            # print("El mensaje original era:")
-            # print(originalMessage)
-            return originalMessage.decode(FORMAT)   # Devuelve en utf-8
-        # print("-.-.-.-.-.-.-.- El mensaje no era para mí")
+            originalMessage = f.decrypt(encryptedMessage).decode(FORMAT)
+            originalMessageSections = originalMessage.split(":")
+            if originalMessageSections[0] == destToken:
+                print(f"{originalMessageSections[0]} == {destToken}")
+                print(f"[MESSAGE DECODER] Message '{originalMessage}' decoded correctly")
+                return originalMessageSections[1]
+            else:
+                print(f"[MESSAGE DECODER] ERROR ON DIRECT MESSAGE DECODING: {originalMessageSections} IS NOT {destToken}")
+                authenticated = False
+        
+        # If the message is addressed to every taxi
         elif destToken == "broadcastMessage":
+            broadcastCertificate = readCertificateOnFile(broadcast=True)
             f = Fernet(broadcastCertificate)
-            originalMessage = f.decrypt(encryptedMessage)
-            print(f"[MESSAGE DECODER] Broadcast message '{originalMessage}' decoded correctly")
-            return originalMessage.decode(FORMAT)   # Devuelve en utf-8
+            originalMessage = f.decrypt(encryptedMessage).decode(FORMAT)
+            originalMessageSections = originalMessage.split(":")
+            if originalMessageSections[0] == destToken:
+                print(f"{originalMessageSections[0]} == {destToken}")
+                return originalMessageSections[1]
+            else:
+                print(f"[MESSAGE DECODER] ERROR ON BROADCAST MESSAGE DECODING: {originalMessageSections} IS NOT {destToken}")
+                authenticated = False
+
         return False
     except Exception as e:
         print(f"[MESSAGE DECODER] THERE HAS BEEN AN ERROR DECODING THE MESSAGE. {e}")
+        authenticated = False
+        authenticationLoop()
         return False
+
+# DESCRIPTION: Este método recibe el certificado para el taxi como cadena de caracteres (string) y lo almacena en un fichero con
+# el siguiente formato de nombre: taxi_<ID>_session.cert
+# STARTING_VALUES: Certificado como cadena de caractere (string)
+# RETURNS: NONE
+# NEEDS: NONE
+def storeCertificateOnFile(certificate, broadcast=False):
+    try:
+        filePath = f"{CERTIFICATE_FOLDER}taxi_{str(ID)}_session.cert"
+        if broadcast:
+            filePath = f"{CERTIFICATE_FOLDER}Broadcast.cert"
+        f = open(filePath, "w")
+        f.write(certificate.decode(FORMAT))
+        f.close()
+        print(f"[CERTIFICATE HANDLER] New certificate stored successfully")
+    except Exception as e:
+        print(f"[CERTIFICATE HANDLER] THERE HAS BEEN AN ERROR STORING THE SESSION CERTIFICATE. {e}")
+    
+def readCertificateOnFile(broadcast=False):
+    try:
+        filePath = f"{CERTIFICATE_FOLDER}taxi_{str(ID)}_session.cert"
+        if broadcast:
+            filePath = f"{CERTIFICATE_FOLDER}Broadcast.cert"
+       
+        f = open(filePath, "r")
+        certificate = f.readline().encode(FORMAT)
+        f.close()
+        print(f"[CERTIFICATE HANDLER] Certificate file read successfully")
+        return certificate
+    except Exception as e:
+        print(f"[CERTIFICATE HANDLER] THERE HAS BEEN AN ERROR STORING THE SESSION CERTIFICATE. {e}")
+    
+
 
 ##########  COMMUNICATION WITH CENTRAL  ##########
 
@@ -157,9 +205,6 @@ def sendState():
                     time.sleep(0.5)
                 else:
                     print("")
-            else:
-                time.sleep(1)
-                print("No autenticado!")
     # Manage any exception ocurred
     except KeyboardInterrupt:
         print(f"[SEND STATE] CORRECTLY CLOSED")
@@ -176,6 +221,7 @@ def sendState():
 # RETURNS: NONE
 # NEEDS: NONE
 def waitForACK():
+    global authenticated, lastAckTime
     print("ACK function")
     ackListener = None
     try:
@@ -187,14 +233,14 @@ def waitForACK():
             if decodedMessage:
                 if ID in decodedMessage:
                     ok = True
+                    lastAckTime = time.time()
                     print(f"[SEND STATE] ACK received successfully")
                     break
         if not ok:
-            print("[ALARM] LOST CONNECTION WITH CENTRAL CONTROL")
-            # connected = False
-            #
-            # TODO: Decide what should be done in this case
-            #
+            if time.time() - lastAckTime > 10:
+                print("[ALARM] LOST CONNECTION WITH CENTRAL CONTROL")
+                authenticated = False
+                authenticationLoop()
     # Manage any exception ocurred
     except Exception as e:
         print(f"[SEND STATE] AN ERROR OCURRED WHILE SENDING MY STATE: {e}")
@@ -441,7 +487,7 @@ def receiveWeatherChanges():
 
     while True:
         try:
-            if broadcastCertificate:
+            if authenticated:
                 for message in receiver:
                     decodedMessage = decodeIfForMe(message.value)
                     # If weather changed from bad to good
@@ -453,9 +499,9 @@ def receiveWeatherChanges():
                     elif "BADWEATHER" in decodedMessage:
                         print(f"[WEATHER RECEIVER] WARNING: Received weather is KO. Returning to Base")
                         activeBeforeEmergency = active
-                        receiveMapStateThread = threading.Thread(target=goTo, args=("000", True))
-                        receiveMapStateThread.daemon = True
-                        receiveMapStateThread.start()
+                        emergencyGoToThread = threading.Thread(target=goTo, args=("000", True))
+                        emergencyGoToThread.daemon = True
+                        emergencyGoToThread.start()
 
                         
 
@@ -594,13 +640,27 @@ def checkSensors():
 
 ##########  TAXI AUTHENTICATION  ##########
 
+def authenticationLoop():
+    global authenticated, onAuthenticationLoop, onAuthenticationLoopLock
+    onAuthenticationLoopLock.acquire()
+    if not onAuthenticationLoop:
+        onAuthenticationLoop = True        
+        while not authenticated:
+            authenticate(reauth=True)
+            time.sleep(3)
+        onAuthenticationLoop = False
+    onAuthenticationLoopLock.release()
+
+
+
 # Connection through Sockets
 # DESCRIPTION: Sends a message to the Central Control with the taxi ID and waits for it to answer with OK or KO
 # STARTING_VALUES: NONE
 # RETURNS: True [si se ha realizado correctamente]; False si ha habido algún problema
 # NEEDS: NONE
 def authenticate(reauth=False):
-    global token, certificate, authenticated, broadcastCertificate
+    global token, authenticated, lastAckTime
+    
     context = ssl.SSLContext(ssl.PROTOCOL_TLSv1)
 
     conn = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -633,12 +693,13 @@ def authenticate(reauth=False):
             answer = splitMessage[0]#.decode(FORMAT)
             print("Answer = "+answer)
             if answer:
+                lastAckTime = time.time()
                 if answer == "OK":
                     print(f"[AUTHENTICATION PROCESS]: Authenticated sucessfully")
                     token = splitMessage[1]#.decode(FORMAT)
-                    certificate = splitMessage[2].encode(FORMAT)
+                    storeCertificateOnFile(splitMessage[2].encode(FORMAT))
                     broadcastCertificate = splitMessage[3].encode(FORMAT)
-                    print(f"--------------> BORRAR: CLAVE RECIBIDA = {certificate}")
+                    storeCertificateOnFile(broadcastCertificate, broadcast=True)
                     client.close()
                     authenticated = True
                     return True
@@ -665,7 +726,7 @@ def authenticate(reauth=False):
 # NEEDS: NONE
 def leave(id, password):
     global registered
-    url = 'https://' + REGISTRYIP + ':' + REGISTRYPORT + '/deleteTaxi'
+    url = 'https://' + REGISTRYIP + ':' + APIPORT + '/deleteTaxi'
     payload = {'id': str(id), 'password': str(password)}
     response = requests.post(url, json=payload, verify=False)
     response = response.json()
@@ -674,9 +735,10 @@ def leave(id, password):
         return 1
     elif response["response"] == 'KO':
         return 0
-    elif response["respnse"] == 'ERR':
+    elif response["response"] == 'ERR':
         return -1
-    
+    authenticated = False
+
 # DESCRIPTION: Da de alta al taxi, pasandole la id y password por parámetro
 # STARTING_VALUES: id del taxi, y la contraseña
 # RETURNS: -1, si ha habido un error, 0 si ya hay un taxi con esa id, 1 si se ha podido registrar correctamente
@@ -695,7 +757,7 @@ def register(id, password):
         return 1
     elif response["response"] == 'KO':
         return 0
-    elif response["respnse"] == 'ERR':
+    elif response["response"] == 'ERR':
         return -1
 
 
@@ -706,6 +768,7 @@ def register(id, password):
 # RETURNS: NONE
 # NEEDS: translateMapMessage
 def receiveMapState(mapButtons):
+    global lastAckTime
     try:
         receiver = KafkaConsumer("Central2DEMap", bootstrap_servers=str(BROKER_IP) + ':' + str(BROKER_PORT))
     except Exception as e:
@@ -713,20 +776,19 @@ def receiveMapState(mapButtons):
 
     while True:
         try:
-            
-            if broadcastCertificate:
+            if authenticated:
                 # Kafka producer and consumer
                 for message in receiver:
+                    lastAckTime = time.time()
                     decodedMessage = decodeIfForMe(message.value)
-                    # print(f"Mapa recibido: {decodedMessage}")
-                    translateMapMessage(decodedMessage)
-                    updateMap(mapButtons)
+                    if decodedMessage:
+                        translateMapMessage(decodedMessage)
+                        updateMap(mapButtons)
             
                 
         # Manage any exception ocurred
         except Exception as e:
             print(f"[MAP RECEIVER] THERE HAS BEEN AN ERROR WHILE RECEIVING MAP STATE INFORMATION. {e}")
-        finally:
             receiver.close()
 
 # DESCRIPTION: Convierte la cadena de caracteres recibida en un array y actualiza el estado del mapa
@@ -756,45 +818,46 @@ def onMapClick(x, y):
 # RETURNS: NONE
 # NEEDS: NONE
 def updateMap(mapButtons):
-    global lockMapArray, mapArray, lastMapArray, lockLastMapArray
+    global lockMapArray, mapArray, lastMapArray, lockLastMapArray, authenticated
     try:
-        # Changing map cells' state
-        for i in range(MAP_COLUMNS):
-            for j in range(MAP_ROWS):
-                lockMapArray.acquire()
-                lockLastMapArray.acquire()
-                if mapArray[i* MAP_COLUMNS + j] != lastMapArray[i* MAP_COLUMNS + j]:
-                    lockMapArray.release()
-                    lockLastMapArray.release()
-                    print("wow")
-                    color = "white"
-                    infoText = ""
+        if authenticated:
+            # Changing map cells' state
+            for i in range(MAP_COLUMNS):
+                for j in range(MAP_ROWS):
                     lockMapArray.acquire()
-                    item = str(mapArray[i* MAP_COLUMNS + j])
-                    lockMapArray.release()
-                    
-                    if item != "#":
-                        infoText = item
-                        # Item is a location or a client
-                        if item.isalpha():
-                            # It is a location
-                            if item.isupper():
-                                color = "cyan"
-                            # It is a location
-                            elif item.islower():
-                                color = "yellow"
-                        # Item is a moving taxi
-                        elif item.isnumeric() or item.isalnum():
-                            color = "green"
-                        # Item is a broken or stopped taxi
-                        if "!" in item or "-" in item:
-                            color = "red"   
-                            if "-" in item:
-                                item.replace("-", "")
-                    mapButtons[i][j].configure(bg = color, text = infoText)
-                else:
-                    lockMapArray.release()
-                    lockLastMapArray.release()
+                    lockLastMapArray.acquire()
+                    if mapArray[i* MAP_COLUMNS + j] != lastMapArray[i* MAP_COLUMNS + j]:
+                        lockMapArray.release()
+                        lockLastMapArray.release()
+                        print("wow")
+                        color = "white"
+                        infoText = ""
+                        lockMapArray.acquire()
+                        item = str(mapArray[i* MAP_COLUMNS + j])
+                        lockMapArray.release()
+                        
+                        if item != "#":
+                            infoText = item
+                            # Item is a location or a client
+                            if item.isalpha():
+                                # It is a location
+                                if item.isupper():
+                                    color = "cyan"
+                                # It is a location
+                                elif item.islower():
+                                    color = "yellow"
+                            # Item is a moving taxi
+                            elif item.isnumeric() or item.isalnum():
+                                color = "green"
+                            # Item is a broken or stopped taxi
+                            if "!" in item or "-" in item:
+                                color = "red"   
+                                if "-" in item:
+                                    item.replace("-", "")
+                        mapButtons[i][j].configure(bg = color, text = infoText)
+                    else:
+                        lockMapArray.release()
+                        lockLastMapArray.release()
         print(f"[GUI MAP CREATOR]: Updated map.")                    
                     
         # root.after(500, lambda: updateMap(mapButtons, root))
@@ -818,6 +881,7 @@ def updateInfoGUI(mapButtons, root):
         stateInfo = stateInfo + "SIN REGISTRAR"
 
     infoLabel.config(text=stateInfo)
+    print("GUI UPDATED")
     root.after(1000, lambda: updateInfoGUI(infoLabel, root))
 
 
@@ -863,6 +927,9 @@ def createGUI(mainFrame):
         authenticateButton = ttk.Button(optionsFrame, text="AUTENTICAR", command=lambda: authenticate())
         authenticateButton.pack(side=tk.BOTTOM, padx=5)
 
+        signOutButton = ttk.Button(optionsFrame, text="DAR DE BAJA", command=lambda: leave())
+        signOutButton.pack(side=tk.BOTTOM, padx=5)
+
         # MAPA
 
         # Marco para el mapa
@@ -881,6 +948,7 @@ def createGUI(mainFrame):
                 btn.grid(row=i, column=j, padx=1, pady=1)
                 row.append(btn)
             mapButtons.append(row)
+        print(f"[GUI CREATOR]: finished GUI start")
         return infoLabel, mapButtons
     except Exception as e:
         print(f"[GUI CREATOR]: THERE HAS BEEN AN ERROR WHILE CREATING THE GUI. {e}")
@@ -915,9 +983,10 @@ if (len(sys.argv) == 9):
     customerOnBoard = False
     registered = False
     authenticated = False
-    broadcastCertificate = False
     emergency = False
     activeBeforeEmergency = True
+    onAuthenticationLoop = False
+    lastAckTime = False
     sensorsState = []
     sensorsIDs = []
     mapArray = []
@@ -929,6 +998,7 @@ if (len(sys.argv) == 9):
     lockSensorsState = threading.Lock()
     lockLastMapArray = threading.Lock()
     lockService = threading.Lock()
+    onAuthenticationLoopLock = threading.Lock()
 
 
     for i in range(MAP_COLUMNS * MAP_ROWS):
@@ -943,8 +1013,7 @@ if (len(sys.argv) == 9):
         mainFrame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         # Create map of size 20x20
         infoLabel, mapButtons = createGUI(mainFrame)
-        
-        root.after(1000, lambda: updateInfoGUI(infoLabel, root))
+        root.after(8000, lambda: updateInfoGUI(infoLabel, root))
 
         ## Creating a thread for Sensor Server ##
         sensorThread = threading.Thread(target=startSensorServer)

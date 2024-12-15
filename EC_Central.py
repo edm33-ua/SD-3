@@ -28,7 +28,7 @@ FORMAT = 'utf-8'
 TABLENAMES = ['Taxis', 'Clients', 'Registry']
 LOCATION_FILE = 'EC_locations.json'
 SECONDS = 10
-CERTIFICATE_FOLDER = 'Certificates'
+CERTIFICATE_FOLDER = 'Certificates/'
 
 global dbLock, internalMemory, memLock, locationDictionary, locLock, clientMapLocation, clientLock
 global connDictionary, connDicLock
@@ -96,7 +96,7 @@ class Client:
 # RETURNS: NONE
 # NEEDS: NONE
 def weatherManager():
-    global weatherState, weatherState2, SERVER
+    global weatherState, weatherState2
     producer = KafkaProducer(bootstrap_servers=str(BROKER_IP) + ':' + str(BROKER_PORT))
     # We define the url to call
     url = "http://" + CTCSERVER + ":" + CTCPORT + "/getWeather"
@@ -569,7 +569,8 @@ def informClientAboutJourney():
                 if 'LOCATION' in decodedMessage:
                     taxiID = decodedMessage[0:2]
                     time.sleep(1)
-                    producer.send('Central2DEServiceACK', (taxiID + '_ACK').encode(FORMAT))
+                    encodedMessage = encodeMessage(originalMessage=(taxiID + '_ACK'))
+                    producer.send('Central2DEServiceACK', encodedMessage)
                     # We make sure the taxi had a client so we don't confuse it as a response for a CENTRAL CONTROL order
                     memLock.acquire()
                     value = internalMemory[taxiID]
@@ -609,7 +610,8 @@ def informClientAboutJourney():
                 elif 'DESTINATION' in decodedMessage:
                     taxiID = decodedMessage[0:2]
                     time.sleep(1)
-                    producer.send('Central2DEServiceACK', (taxiID + '_ACK').encode(FORMAT))
+                    encodedMessage = encodeMessage(originalMessage=(taxiID + '_ACK'))
+                    producer.send('Central2DEServiceACK', encodedMessage)
                     # We proceed to modify the internal memory to reflect the end of service for the taxi, as well as deleting the client
                     time.sleep(0.5)
                     memLock.acquire()
@@ -717,16 +719,21 @@ def checkClientConnections():
             
 ############ TAXI COMMUNICATION ############
 
+# DESCRIPTION: Crea la clave simétrica utilizada en la encriptación de los mensajes
+# dirigidos a todos los taxis y la almacena en un fichero .cert
+# STARTING_VALUES: NONE
+# RETURNS: True si se ha generado correctamente; False si ha habido algún problema
+# NEEDS: NONE
 def generateBroadcastCertificate():
     try:
 
         broadCastCertificate = Fernet.generate_key()
-        filePath = CERTIFICATE_FOLDER + "/Broadcast.cert"
+        filePath = CERTIFICATE_FOLDER + "Broadcast.cert"
         f = open(filePath, "w")
         f.write(broadCastCertificate.decode(FORMAT))
         f.close()
         print(f"[BROADCAST CERITIFICATE GENERATOR] Broadcast certificate generated successfully")
-        print(broadCastCertificate)
+        return True
     except Exception as e:
         print(f"[BROADCAST CERITIFICATE GENERATOR] THERE HAS BEEN AN ERROR GENERATING BROADCAST CERTIFICATE. {e}")
         return False
@@ -739,16 +746,23 @@ def generateBroadcastCertificate():
 # NEEDS: NONE
 def getToken(taxiID):
     global taxiSession
-    
+    lastFound = False
     for key, item in taxiSessions.items():
-        if str(item[1]) == str(taxiID):
-            return str(key)
-    return False
+        if str(item) == str(taxiID):
+            lastFound = str(key)
+    return lastFound
 
-
-def getCertificateFromFile(filename):
+# DESCRIPTION: Obtiene el certificado almacenado en un determinado fichero .cert
+# STARTING_VALUES: nombre del fichero del que extraer la clave
+# RETURNS: NONE
+# NEEDS: NONE
+def getCertificateFromFile(targetID):
     try:
-        filePath = CERTIFICATE_FOLDER+"/"+filename
+        certificateFile = "Broadcast.cert"
+        if targetID != "Broadcast":
+            certificateFile = f"taxi_{targetID}_session.cert"
+        
+        filePath = CERTIFICATE_FOLDER+certificateFile
         f = open(filePath, "r")
         certificate = f.readline().encode(FORMAT)
         f.close()
@@ -769,20 +783,21 @@ def encodeMessage(taxiID=False, originalMessage="", broadcastEncoding=False):
         certificate = False
         token = False
         if broadcastEncoding:
-            certificate = getCertificateFromFile("Broadcast.cert")
+            certificate = getCertificateFromFile("Broadcast")
             token = "broadcastMessage"
         else:
             taxiToken = getToken(str(taxiID).zfill(2))
             if taxiToken:
                 token = taxiToken
-                certificate = taxiSessions[taxiToken][0]
+                certificate = getCertificateFromFile(str(taxiID).zfill(2))
         
         if certificate:
             f = Fernet(certificate)
-            # print(originalMessage)
-            encodedMessage = f.encrypt(originalMessage.encode(FORMAT))
+            enrichedMessage = (f"{token}:{originalMessage}").encode(FORMAT)
+            encodedMessage = f.encrypt(enrichedMessage)
             finalMessage = token + "|" + encodedMessage.decode(FORMAT)
-            print(f"[MESSAGE ENCODER] Message '{originalMessage}' encoded correctly")
+            if not broadcastEncoding:
+                print(f"[MESSAGE ENCODER] Message '{originalMessage}' encoded correctly")
             return finalMessage.encode(FORMAT)      # Como cadena de bytes
         
         return False
@@ -803,9 +818,9 @@ def decodeMessage(message):
         # print("-------> MENSAJE RECIBIDO: " + message)
         taxiToken = splitMessage[0]
         encryptedMessage = splitMessage[1]
-        taxiInfo = taxiSessions[taxiToken]
-        if taxiInfo:
-            taxiCertificate = taxiInfo[0]
+        taxiID = taxiSessions[taxiToken]
+        if taxiID:
+            taxiCertificate = getCertificateFromFile(str(taxiID).zfill(2))
             print("CERTIFICADO:")
             print(taxiCertificate)
             f = Fernet(taxiCertificate)
@@ -939,9 +954,9 @@ def authenticate(conn, addr):
             # If the taxi accomplishes the requirements for starting a session
             if authenticationOK:
                 token, certificate = updateSessions(taxiId)
-                broadcastCertificate = getCertificateFromFile("Broadcast.cert")
+                broadcastCertificate = getCertificateFromFile("Broadcast")
                 message = f"OK|{token}|{certificate.decode(FORMAT)}|{broadcastCertificate.decode(FORMAT)}"        # Convertimos la clave en una cadena de caracteres
-                print(f"------------------> BORRAR: CLAVE GENERADA = {certificate}")
+                # print(f"------------------> BORRAR: CLAVE GENERADA = {certificate}")
                 # message = ("OK_" + str(token) + "_").encode(FORMAT)
                 # message = message + certificate
 
@@ -977,8 +992,23 @@ def updateSessions(taxiID):
     except Exception as e:
         print(f"[SESSION MANAGER] THERE HAS BEEN AN ERROR ON TOKEN OR CERTIFICATE CREATION FOR TAXI {taxiID}. {e}")
     try:
-        taxiSessions[token] = (certificate, taxiID)
+        filePath = f"{CERTIFICATE_FOLDER}taxi_{taxiID}_session.cert"
+        # Create or overwrite the certificate file
+        f = open(filePath, "w")
+        f.write(certificate.decode(FORMAT))
+        f.close()
+        # Remove last session entry if found
+        oldToken = getToken(taxiID)
+        
+        # Store token and taxiID relation for fast access
+        taxiSessions[token] = taxiID
         print(f"[SESSION MANAGER] Stored session token and certificate for {taxiID}")
+        # After a reasonable time delete the old token
+        time.sleep(3)
+
+        if oldToken:
+            del taxiSessions[oldToken]
+        
     except Exception as e:
         print(f"[SESSION MANAGER] THERE HAS BEEN AN ERROR ON ACTIVE SESSIONS REGISTRY FOR {taxiID}. {e}")
 
@@ -1040,8 +1070,8 @@ def hearTaxiStates():
                 active = decodedMessage[10:11]
                 mounted = decodedMessage[12:]
                 # We then create a thread that after a second, will send the ACK through kafka
-                message = ("ACK_" + taxiID)
-                encodedMessage = encodeMessage(taxiID, message)
+                ackMessage = ("ACK_" + taxiID)
+                encodedMessage = encodeMessage(taxiID, ackMessage)
                 threading.Timer(1, lambda: producer.send('Central2DEACK', encodedMessage)).start()
                 # Then we update the internalMemory (dictionary) for the taxi, first creating a new Taxi entity
                 memLock.acquire()
@@ -1053,6 +1083,14 @@ def hearTaxiStates():
                 connDicLock.acquire()
                 connDictionary.update({taxiID: 0})
                 connDicLock.release()
+            # If there has been an error on message decription
+            else:
+                taxiToken = message.value.decode(FORMAT).split("|")[0]
+                taxiID = taxiSessions[taxiToken]
+                answerMessage = (f"NOT_UNDERSTOOD_{taxiID}")
+                encodedMessage = encodeMessage(taxiID, answerMessage)
+                threading.Timer(1, lambda: producer.send('Central2DEACK', encodedMessage)).start()
+                producer.send
 
     except Exception as e:
         print(f"[TAXI FLEET MANAGEMENT]: THERE HAS BEEN AN ERROR WHILE HEARING TAXIS' STATES. {e}")
