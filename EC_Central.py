@@ -16,6 +16,7 @@ from secrets import token_hex
 from cryptography.fernet import Fernet
 import hashlib
 import requests
+from datetime import datetime
 
 # SERVER = "172.21.242.82"
 MAP_ROWS = 20
@@ -27,6 +28,8 @@ TABLENAMES = ['Taxis', 'Clients', 'Registry']
 LOCATION_FILE = 'EC_locations.json'
 SECONDS = 10
 CERTIFICATE_FOLDER = 'Certificates/'
+LOGS_FOLDER = 'Logs/'
+LOGS_FILE_PATH = LOGS_FOLDER + "Central.log"
 
 global dbLock, internalMemory, memLock, locationDictionary, locLock, clientMapLocation, clientLock
 global connDictionary, connDicLock
@@ -34,6 +37,8 @@ global taxiTableGlobal, selectedTaxi, selectedPos
 global clientConnections, clientConnectionsLock
 global weatherState, weatherState2
 global taxiSessions
+global logFileLock
+global IPsForIDs
 
 ############ LOCAL CLASSES ############
 
@@ -111,12 +116,12 @@ def weatherManager():
                 # Enviar el GOODWEATHER
                 encodedMessage = encodeMessage(originalMessage='GOODWEATHER', broadcastEncoding=True)
                 producer.send('Central2DEWeather', encodedMessage)
-                print(f"[WEATHER MANAGER] The sun shines again!")
+                addToLogFile(f"[WEATHER MANAGER] The sun shines again!")
             else:
                 # Enviar el BADWEATHER
                 encodedMessage = encodeMessage(originalMessage='BADWEATHER', broadcastEncoding=True)
                 producer.send('Central2DEWeather', encodedMessage)
-                print(f"[WEATHER MANAGER] A storm approaches...")
+                addToLogFile(f"[WEATHER MANAGER] A storm approaches...")
         # Equals the before state to the current state
         weatherState = weatherState2
         time.sleep(10)
@@ -131,7 +136,7 @@ def readJsonConfigurationFile():
     global locationDictionary, locLock
 
     try:
-        print(f"[JSON FILE MANAGER] Reading .json location file")
+        addToLogFile(f"[JSON FILE MANAGER] Reading .json location file", causingID="self")
         # Open and read the JSON file
         f = open(LOCATION_FILE)
         data = json.load(f)
@@ -146,10 +151,10 @@ def readJsonConfigurationFile():
             value = int(stringValue[0])*20 + int(stringValue[1])
             locationDictionary.update({key: value})
         locLock.release()
-        print(f'[JSON FILE MANAGER] Succesful creation of the internal dictionary for the locations')
+        addToLogFile(f'[JSON FILE MANAGER] Succesful creation of the internal dictionary for the locations', causingID="self")
 
     except Exception as e:
-        print(f"[JSON FILE MANAGER] THERE HAS BEEN AN ERROR WHILE READING JSON FILE: {e}")
+        addToLogFile(f"[JSON FILE MANAGER] THERE HAS BEEN AN ERROR WHILE READING JSON FILE: {e}", causingID="self")
         f.close()
 
 ############ DATABASE/MEMORY METHODS ############
@@ -185,7 +190,7 @@ def findInRegistry(id, password):
         else:
             return -1
     except Exception as e:
-        print(f"[DATABASE HANDLER] THERE HAS BEEN AN ERROR WHEN TRYING TO FIND A TAXI IN THE REGISTRY TABLE. {e}")
+        addToLogFile(f"[DATABASE HANDLER] THERE HAS BEEN AN ERROR WHEN TRYING TO FIND A TAXI IN THE REGISTRY TABLE. {e}")
 
 # DESCRIPTION: Este método inicia los valores de la memoria interna con los de la base de datos. Su propósito es ser capaz
 # de retomar las acciones que estaba realizando cuando la central se desconecte
@@ -230,7 +235,7 @@ def initializeInnerMemory():
         dbLock.release()
         conn.close()
     except Exception as e:
-        print(f"[DATABASE MANAGER] THERE HAS BEEN A PROBLEM WHILE LOADING THE DDBB INFORMATION IN THE INTERNAL MEMORY. {e}")
+        addToLogFile(f"[DATABASE MANAGER] THERE HAS BEEN A PROBLEM WHILE LOADING THE DDBB INFORMATION IN THE INTERNAL MEMORY. {e}", causingID="self")
 
 # DESCRIPTION: Este método acorta el código en el método refresh. Realiza el proceso de borrado
 # STARTING_VALUES: NONE
@@ -251,7 +256,7 @@ def refreshDelete():
                 c.execute(f"DELETE FROM Clients WHERE id = '{client}'")
                 clients.remove(client)
     except Exception as e:
-        print(f'[DATABASE MANAGER] THERE HAS BEEN AN ERROR WHILE ADDING TO THE DATABASE TABLES. {e}')
+        addToLogFile(f'[DATABASE MANAGER] THERE HAS BEEN AN ERROR WHILE ADDING TO THE DATABASE TABLES. {e}', causingID="self")
 
 # DESCRIPTION: Este método acorta el código en el método refresh. Realiza el proceso de actualizado
 # STARTING_VALUES: NONE
@@ -287,7 +292,7 @@ def refreshUpdate():
                     f"taxi = '{clientTaxiDictionary[client]}', pos = '{position}' WHERE id = '{client}'")
         clientLock.release()
     except Exception as e:
-        print(f'[DATABASE MANAGER] THERE HAS BEEN AN ERROR WHILE ADDING TO THE DATABASE TABLES. {e}')
+        addToLogFile(f'[DATABASE MANAGER] THERE HAS BEEN AN ERROR WHILE ADDING TO THE DATABASE TABLES. {e}', causingID="self")
 # DESCRIPTION: Este método acorta el código en el método refresh. Realiza el proceso de adición
 # STARTING_VALUES: NONE
 # RETURNS: NONE
@@ -320,7 +325,7 @@ def refreshAdd():
                         destination = clientMapLocation[item.id]
                     c.execute(f"INSERT INTO Clients VALUES ('{item.id}', '{item.destination}', '{item.state}', '{clientTaxiDictionary[client]}', '{destination}')")
     except Exception as e:
-        print(f'[DATABASE MANAGER] THERE HAS BEEN AN ERROR WHILE ADDING TO THE DATABASE TABLES. {e}')
+        addToLogFile(f'[DATABASE MANAGER] THERE HAS BEEN AN ERROR WHILE ADDING TO THE DATABASE TABLES. {e}', causingID="self")
 
 # DESCRIPTION: Este método lo que hace es actualizar la base de datos en base a la memoria interna
 # STARTING_VALUES: NONE
@@ -332,7 +337,7 @@ def refresh():
     try:
         while True:
 
-            print('[DATABASE MANAGER] Updating database...')
+            addToLogFile('[DATABASE MANAGER] Updating database...', causingID="self")
             # We first connect to the database
             dbLock.acquire()
             conn = sqlite3.connect(DATABASE)
@@ -365,11 +370,11 @@ def refresh():
             conn.commit()
             conn.close()
             dbLock.release()
-            print('[DATABASE MANAGER] Database update is finished without errors')
+            addToLogFile('[DATABASE MANAGER] Database update is finished without errors', causingID="self")
             time.sleep(5)
 
     except Exception as e:
-        print(f'[DATABASE MANAGER] THERE HAS BEEN AN ERROR WHILE UPDATING THE DATABASE TABLES. {e}')
+        addToLogFile(f'[DATABASE MANAGER] THERE HAS BEEN AN ERROR WHILE UPDATING THE DATABASE TABLES. {e}', causingID="self")
 
 # DESCRIPTION: Este método lo que hace es comprobar que existan la tablas Taxis y Clients en la base de datos,
 # y en caso de que no existan, se crean
@@ -392,10 +397,10 @@ def checkTablesForDB():
             exists = c.fetchone()
             # In case it exists, we print that the table already exists,
             if exists:
-                print(f'[DATABASE HANDLER] Table {name} found')
+                addToLogFile(f'[DATABASE HANDLER] Table {name} found', causingID="self")
             # but in case it doesn't, we create the table
             else:
-                print(f'[DATABASE HANDLER] Table {name} not found. Proceeding to table creation...')
+                addToLogFile(f'[DATABASE HANDLER] Table {name} not found. Proceeding to table creation...', causingID="self")
                 if name == 'Taxis':
                     c.execute("CREATE TABLE Taxis (id text PRIMARY KEY, destination text, state text, service text," + 
                               "client text, active text, mounted text, pos text)")
@@ -409,7 +414,7 @@ def checkTablesForDB():
         conn.close()
         dbLock.release()
     except Exception as e:
-        print(f'[DATABASE MANAGER] THERE HAS BEEN AN ERROR WHILE GETTING THE DATABASE TABLES. {e}')
+        addToLogFile(f'[DATABASE MANAGER] THERE HAS BEEN AN ERROR WHILE GETTING THE DATABASE TABLES. {e}', causingID="self")
         conn.close()
 
 # DESCRIPTION: Este método busca si un taxi está registrado en la memoria interna. De ser así, devuelve True, si no, devuelve False
@@ -426,7 +431,7 @@ def findTaxiID(taxiID):
         # And return the value
         return condition
     except Exception as e:
-        print(f'[TAXI FLEET MANAGEMENT] THERE HAS BEEN AN ERROR WHILE FINDING TAXI ID ON DATABASE. {e}')
+        addToLogFile(f'[TAXI FLEET MANAGEMENT] THERE HAS BEEN AN ERROR WHILE FINDING TAXI ID ON DATABASE. {e}', causingID="self")
 
 # DESCRIPTION: Este método encuentra si hay algún taxi que no tenga cliente y no esté onService. De ser así, lo devuelve, de no ser así, devuelve None
 # STARTING_VALUES: NONE
@@ -449,7 +454,80 @@ def getFirstAvailableTaxi():
         memLock.release()
         return None
     except Exception as e:
-        print(f'[CLIENT MANAGER] THERE WAS AN ERROR WHILE GETTING AN AVAILABLE TAXI. {e}')
+        addToLogFile(f'[CLIENT MANAGER] THERE WAS AN ERROR WHILE GETTING AN AVAILABLE TAXI. {e}', causingID="self")
+
+
+############ LOG MESSAGES MANAGEMENT ############
+
+# DESCRIPTION: Este método recibe una id, tanto de taxi como de usuario y obtiene
+# la dirección ip relacionada a esta
+# STARTING_VALUES: ID del cliente o taxi 
+# RETURNS: IP asociada al ID
+# NEEDS: NONE
+def getIPFromID(receivedID):
+    global IPsForIDs
+    try:
+        ip = IPsForIDs[receivedID]
+        if ip:
+            return ip
+    except Exception as e:
+        return False
+
+# DESCRIPTION: Este método crea un fichero de log en caso de que no exista e introduce la primera entrada
+# STARTING_VALUES: NONE 
+# RETURNS: NONE
+# NEEDS: NONE
+def createLogFile():
+    try:
+        with open(LOGS_FILE_PATH, "x"):
+            with open(LOGS_FILE_PATH, "a") as logFile:
+                message = "[LOG FILE MANAGER] Created new LOG file."
+                print(message)
+                logFile.write(message)
+    except FileExistsError:
+        print(f'[LOG FILE MANAGER] Found existing LOG file.')
+    except Exception as e:
+        print(f'[LOG FILE MANAGER] THERE WAS AN ERROR WHILE CREATING THE LOG FILE. {e}')
+
+# DESCRIPTION: Este método se encarga de generar los mensajes de log, incluyendo en ellos la ip del
+# módulo que lo origina, la fecha y la hora exactas a las que se produjo el suceso y un mensaje explicativo.
+# Esta información la imprime por pantalla y la almacena en un fichero de log
+# STARTING_VALUES: mensaje de suceso, id del módulo causante del suceso e IP del causante, en caso de disponer de ésta 
+# RETURNS: NONE
+# NEEDS: getIPFromID(), createLogFile()
+def addToLogFile(message, causingID=False, directlyIP=False):
+    global logFileLock
+    try:
+        # Determinating the IP that caused the log message
+        timeStamp = datetime.now()
+        ip = "UNKWOWN IP"
+        if causingID:
+            if causingID == "self":
+                ip = SERVER
+            elif directlyIP:
+                ip = causingID
+            else:
+                foundIP = getIPFromID(causingID)
+                if foundIP:
+                    ip = foundIP
+        logMessage = f"{timeStamp}: ({ip}) {message}"
+        print(logMessage)
+        logFileLock.acquire()
+        try:
+            with open(LOGS_FILE_PATH, 'r'):
+                pass
+        except FileNotFoundError:
+            print("\t\t[LOG FILE MANAGER] LOG FILE NOT FOUND. REGENERATING...\n")
+            createLogFile()
+        with open(LOGS_FILE_PATH, "a") as logFile:
+            logFile.write(logMessage+"\n")
+        logFileLock.release()
+
+    except Exception as e:
+        addToLogFile(f'[LOG FILE MANAGER] THERE WAS AN ERROR WHILE ADDING THE LOG FILE. {e}', causingID="self")
+
+
+
 
 ############ CLIENT COMMUNICATION ############
 
@@ -471,16 +549,19 @@ def hearClientPetitions():
             if "ASK" in decodedMessage:
                 # We get the client ID
                 clientID = decodedMessage[0:1]
-                print(f'[CLIENT MANAGER] Client {clientID} asking for taxi service')
+                splitMessage = decodedMessage.split("_")
+                addToLogFile(f'[CLIENT MANAGER] Client {clientID} asking for taxi service', causingID=clientID)
                 # We get the first taxi available
                 taxiForUser = getFirstAvailableTaxi()
+                # Storing the customer's IP address 
+                IPsForIDs[clientID] = str(splitMessage[4])
                 # There was no taxi available
                 if taxiForUser is None:
                     # We send the petition response
                     threading.Timer(1, lambda: producer.send('Central2CustomerInformation', (clientID + '_KO').encode(FORMAT))).start()
                     # Adding client to pending ACK dictionary
                     addToClientConnections(clientID)
-                    print(f'[CLIENT MANAGER] Rejected petition from client {clientID}')
+                    addToLogFile(f'[CLIENT MANAGER] Rejected petition from client {clientID}', causingID="self")
                     # We receive the ACK
                     answer = False
                     for ackMessage in ackConsumer:
@@ -493,7 +574,7 @@ def hearClientPetitions():
                     if answer:
                         continue
                     # RESILIENCE
-                    print(f'[CLIENT MANAGER] Client {clientID} hasn\'n sent ACK. Disconnecting client...')
+                    addToLogFile(f'[CLIENT MANAGER] Client {clientID} hasn\'n sent ACK. Disconnecting client...', causingID=clientID)
                 # There was a taxi available
                 else:
                     # We get where is the client (000)
@@ -530,17 +611,17 @@ def hearClientPetitions():
                             memLock.release()
                             clientLock.release()
                             # We then send the taxi to the location where the user is
-                            print(f'[CLIENT MANAGER] Sending taxi {taxiForUser} to client {clientID}')
+                            addToLogFile(f'[CLIENT MANAGER] Sending taxi {taxiForUser} to client {clientID}', causingID=taxiForUser)
                             sendTaxiToLocation(clientLocation, taxiForUser)
                             answer = True
                             break
                     if answer:
                         continue
                     # RESILIENCE
-                    print(f'[CLIENT MANAGER] Client {clientID} hasn\'n sent ACK. Disconnecting client...')
+                    addToLogFile(f'[CLIENT MANAGER] Client {clientID} hasn\'n sent ACK. Disconnecting client...', causingID=clientID)
                     
     except Exception as e:
-        print(f'[CLIENT MANAGER] THERE WAS AN ERROR WHILE HANDLING A CLIENT PETITION. {e}')
+        addToLogFile(f'[CLIENT MANAGER] THERE WAS AN ERROR WHILE HANDLING A CLIENT PETITION. {e}', causingID="self")
     finally:
         producer.close()
         consumer.close()
@@ -566,7 +647,7 @@ def informClientAboutJourney():
                 if 'LOCATION' in decodedMessage:
                     taxiID = decodedMessage[0:2]
                     time.sleep(1)
-                    encodedMessage = encodeMessage(originalMessage=(taxiID + '_ACK'))
+                    encodedMessage = encodeMessage(taxiID=taxiID, originalMessage=(taxiID + '_ACK'))
                     producer.send('Central2DEServiceACK', encodedMessage)
                     # We make sure the taxi had a client so we don't confuse it as a response for a CENTRAL CONTROL order
                     memLock.acquire()
@@ -578,7 +659,7 @@ def informClientAboutJourney():
                         producer.send('Central2CustomerInformation', (value.client + '_MOUNT').encode(FORMAT))
                         # Adding client to pending ACK dictionary
                         addToClientConnections(value.client)
-                        print(f'[CLIENT MANAGER] Sending MOUNT message to client {value.client}')
+                        addToLogFile(f'[CLIENT MANAGER] Sending MOUNT message to client {value.client}', causingID=taxiID)
                         # We create a boolean to check if the client has answered us
                         answer = False
                         for ACKMessage in clientConsumer:
@@ -607,7 +688,7 @@ def informClientAboutJourney():
                 elif 'DESTINATION' in decodedMessage:
                     taxiID = decodedMessage[0:2]
                     time.sleep(1)
-                    encodedMessage = encodeMessage(originalMessage=(taxiID + '_ACK'))
+                    encodedMessage = encodeMessage(taxiID=taxiID, originalMessage=(taxiID + '_ACK'))
                     producer.send('Central2DEServiceACK', encodedMessage)
                     # We proceed to modify the internal memory to reflect the end of service for the taxi, as well as deleting the client
                     time.sleep(0.5)
@@ -626,7 +707,7 @@ def informClientAboutJourney():
                     memLock.acquire()
                     internalMemory.pop(value.client)
                     memLock.release()
-                    print(f'[CLIENT MANAGER] Client {value.client} has reach its destination and has been deleted from database')
+                    addToLogFile(f'[CLIENT MANAGER] Client {value.client} has reach its destination and has been deleted from database', causingID=taxiID)
                     # We create a boolean to check if the client has answered us
                     answer = False
                     for ACKMessage in clientConsumer:
@@ -638,18 +719,18 @@ def informClientAboutJourney():
                     if answer == True:
                         continue           
                     # RESILIENCE
-                    print(f'[CLIENT MANAGER] Client {value.client} hasn\'t answered FINISHED message')
+                    addToLogFile(f'[CLIENT MANAGER] Client {value.client} hasn\'t answered FINISHED message', causingID=value.client)
                     # removeFromClientConnections(value.client)     
                 
                 # If it was a destination for an emergency action
                 elif "_EMERGENCY_ACTION_SUCCESSFUL" in decodeMessage:
                     messageInfo = decodedMessage.split("_")
                     taxiID = messageInfo[0]
-                    print(f'[TAXI FLEET MANAGEMENT] Taxi {taxiID} finished emergency action')
+                    addToLogFile(f'[TAXI FLEET MANAGEMENT] Taxi {taxiID} finished emergency action', causingID=taxiID)
             
 
     except Exception as e:
-        print(f'[CLIENT HANDLER] THERE HAS BEEN AN ERROR WHILE KEEPING TRACK OF THE CLIENTS\' JOURNEYS. {e}')
+        addToLogFile(f'[CLIENT HANDLER] THERE HAS BEEN AN ERROR WHILE KEEPING TRACK OF THE CLIENTS\' JOURNEYS. {e}', causingID="self")
     finally:
         taxiConsumer.close()
         clientConsumer.close()
@@ -705,8 +786,8 @@ def checkClientConnections():
         clientConnectionsLock.acquire()
         for key, item in clientConnections.items():
             if time.time() - item > SECONDS:
-                print(f"[CLIENT MANAGER] CLIENT {str(key)} HASN'T ANSWERED FOR MORE THAN {SECONDS} SECONDS")            
-                print(f"[CLIENT MANAGER] DELETING CLIENT {str(key)} FROM OUR DATABASE")
+                addToLogFile(f"[CLIENT MANAGER] CLIENT {str(key)} HASN'T ANSWERED FOR MORE THAN {SECONDS} SECONDS", causingID=key)            
+                addToLogFile(f"[CLIENT MANAGER] DELETING CLIENT {str(key)} FROM OUR DATABASE", causingID="self")
                 # Deleting it from internal memory and pending answers
                 removeFromClients(str(key))
                 clientConnections.pop(key)
@@ -729,10 +810,10 @@ def generateBroadcastCertificate():
         f = open(filePath, "w")
         f.write(broadCastCertificate.decode(FORMAT))
         f.close()
-        print(f"[BROADCAST CERITIFICATE GENERATOR] Broadcast certificate generated successfully")
+        addToLogFile(f"[BROADCAST CERITIFICATE GENERATOR] Broadcast certificate generated successfully", causingID="self")
         return True
     except Exception as e:
-        print(f"[BROADCAST CERITIFICATE GENERATOR] THERE HAS BEEN AN ERROR GENERATING BROADCAST CERTIFICATE. {e}")
+        addToLogFile(f"[BROADCAST CERITIFICATE GENERATOR] THERE HAS BEEN AN ERROR GENERATING BROADCAST CERTIFICATE. {e}", causingID="self")
         return False
 
 
@@ -765,7 +846,7 @@ def getCertificateFromFile(targetID):
         f.close()
         return certificate
     except Exception as e:
-        print(f"[CERTIFICATE HANDLER] THERE HAS BEEN AN ERROR READING THE CERTIFICATE. {e}")
+        addToLogFile(f"[CERTIFICATE HANDLER] THERE HAS BEEN AN ERROR READING THE CERTIFICATE. {e}", causingID="self")
 
 
 # DESCRIPTION: Este método recibe un mensaje y la id del taxi al que está dirigido
@@ -794,12 +875,12 @@ def encodeMessage(taxiID=False, originalMessage="", broadcastEncoding=False):
             encodedMessage = f.encrypt(enrichedMessage)
             finalMessage = token + "|" + encodedMessage.decode(FORMAT)
             if not broadcastEncoding:
-                print(f"[MESSAGE ENCODER] Message '{originalMessage}' encoded correctly")
+                addToLogFile(f"[MESSAGE ENCODER] Message '{originalMessage}' encoded correctly", causingID="self")
             return finalMessage.encode(FORMAT)      # Como cadena de bytes
         
         return False
     except Exception as e:
-        print(f"[MESSAGE ENCODER] THERE HAS BEEN AN ERROR ENCODING THE MESSAGE. {e}")
+        addToLogFile(f"[MESSAGE ENCODER] THERE HAS BEEN AN ERROR ENCODING THE MESSAGE. {e}", causingID="self")
         return False
 
 # DESCRIPTION: Este método recibe un mensaje codificado en el formato token_mensajeCifrado y devuelve el
@@ -812,24 +893,18 @@ def decodeMessage(message):
     try:
         message = message.decode(FORMAT)
         splitMessage = message.split("|")
-        # print("-------> MENSAJE RECIBIDO: " + message)
         taxiToken = splitMessage[0]
         encryptedMessage = splitMessage[1]
         taxiID = taxiSessions[taxiToken]
         if taxiID:
             taxiCertificate = getCertificateFromFile(str(taxiID).zfill(2))
-            print("CERTIFICADO:")
-            print(taxiCertificate)
             f = Fernet(taxiCertificate)
-            # print(f"Taxi certificate used for decoding: {taxiCertificate}")
-            # print(f"Mensaje a desencriptar: {encryptedMessage}")
             originalMessage = f.decrypt(encryptedMessage.encode(FORMAT))
-            print(f"[MESSAGE DECODER] Message '{originalMessage.decode(FORMAT)}' decoded correctly")
-            # print(originalMessage.decode(FORMAT))
+            addToLogFile(f"[MESSAGE DECODER] Message '{originalMessage.decode(FORMAT)}' decoded correctly", causingID="self")
             return originalMessage.decode(FORMAT)       # Devuelve el mensaje codificado como cadena de caracteres
     
     except Exception as e:
-        print(f"[MESSAGE DECODER] THERE HAS BEEN AN ERROR DECODING THE MESSAGE. {e}")
+        addToLogFile(f"[MESSAGE DECODER] THERE HAS BEEN AN ERROR DECODING THE MESSAGE. {e}", causingID="self")
         return False
     
 # DESCRIPTION: Este método lo que hace es enviar un string con la información del mapa a los taxis
@@ -896,7 +971,7 @@ def sendMapToTaxis():
             producer.send('Central2DEMap', encodedMapMessage)
 
     except Exception as e:
-        print(f'[MAP TO TAXI SENDER] THERE HAS BEEN AN ERROR WHILE SENDING THE MAP SITUATION TO THE TAXIS. {e}')
+        addToLogFile(f'[MAP TO TAXI SENDER] THERE HAS BEEN AN ERROR WHILE SENDING THE MAP SITUATION TO THE TAXIS. {e}', causingID="self")
     finally:
         producer.close()
 
@@ -911,7 +986,7 @@ def authenticate(conn, addr):
     authenticationOK = False
 
     conn.settimeout(5)
-    print(f"[TAXI AUTHENTICATION SERVICE]: Stablished connection with taxi on {addr}")                  
+    addToLogFile(f"[TAXI AUTHENTICATION SERVICE]: Stablished connection with taxi on {addr}", causingID=addr[0], directlyIP=True)                  
     while True:
         try:
             # Receive taxi information (Format: id_password_auth/reauth)
@@ -922,7 +997,7 @@ def authenticate(conn, addr):
             passwd = processedInfo[1]
             authType = processedInfo[2]
             
-            print(f"[TAXI AUTHENTICATION SERVICE]: Received taxi authentication information for taxi {taxiId}")
+            addToLogFile(f"[TAXI AUTHENTICATION SERVICE]: Received taxi authentication information for taxi {taxiId}", causingID=addr[0], directlyIP=True)
 
             # If taxi is asking for a new session
             if authType == "auth":
@@ -952,26 +1027,24 @@ def authenticate(conn, addr):
                 token, certificate = updateSessions(taxiId)
                 broadcastCertificate = getCertificateFromFile("Broadcast")
                 message = f"OK|{token}|{certificate.decode(FORMAT)}|{broadcastCertificate.decode(FORMAT)}"        # Convertimos la clave en una cadena de caracteres
-                # print(f"------------------> BORRAR: CLAVE GENERADA = {certificate}")
-                # message = ("OK_" + str(token) + "_").encode(FORMAT)
-                # message = message + certificate
-
                 conn.send(message.encode(FORMAT))
-                print(f"[TAXI AUTHENTICATION SERVICE]: Completed authentication process for {taxiId}")
+                # Store IP for this new id on the system
+                IPsForIDs[taxiId] = str(addr[0])
+                addToLogFile(f"[TAXI AUTHENTICATION SERVICE]: Completed authentication process for {taxiId}", causingID="self")
                 break
 
             else:
                 conn.send("KO".encode(FORMAT))
-                print(f"[TAXI AUTHENTICATION SERVICE]: Taxi authentication rejected for taxi {taxiId}")
+                addToLogFile(f"[TAXI AUTHENTICATION SERVICE]: Taxi authentication rejected for taxi {taxiId}", causingID="self")
                 break
                 
         except socket.timeout:
-            print("[TAXI AUTHENTICATION SERVICE]: LOST connection with taxi")
+            addToLogFile("[TAXI AUTHENTICATION SERVICE]: LOST connection with taxi", causingID=taxiId)
             conn.close()                    
             break
         
         except Exception as e:
-            print(f"[TAXI AUTHENTICATION SERVICE]: THERE HAS BEEN AN ERROR ON AUTHENTICATION OF {addr}. {e}")
+            addToLogFile(f"[TAXI AUTHENTICATION SERVICE]: THERE HAS BEEN AN ERROR ON AUTHENTICATION OF {addr}. {e}", causingID="self")
             conn.close()
             break
 
@@ -984,9 +1057,9 @@ def updateSessions(taxiID):
     try:
         token = token_hex(16)
         certificate = Fernet.generate_key()
-        print(f"[SESSION MANAGER] Generated session token and certificate for {taxiID}")
+        addToLogFile(f"[SESSION MANAGER] Generated session token and certificate for {taxiID}", causingID="self")
     except Exception as e:
-        print(f"[SESSION MANAGER] THERE HAS BEEN AN ERROR ON TOKEN OR CERTIFICATE CREATION FOR TAXI {taxiID}. {e}")
+        addToLogFile(f"[SESSION MANAGER] THERE HAS BEEN AN ERROR ON TOKEN OR CERTIFICATE CREATION FOR TAXI {taxiID}. {e}", causingID="self")
     try:
         filePath = f"{CERTIFICATE_FOLDER}taxi_{taxiID}_session.cert"
         # Create or overwrite the certificate file
@@ -998,7 +1071,7 @@ def updateSessions(taxiID):
         
         # Store token and taxiID relation for fast access
         taxiSessions[token] = taxiID
-        print(f"[SESSION MANAGER] Stored session token and certificate for {taxiID}")
+        addToLogFile(f"[SESSION MANAGER] Stored session token and certificate for {taxiID}", causingID="self")
         # After a reasonable time delete the old token
         time.sleep(3)
 
@@ -1006,7 +1079,7 @@ def updateSessions(taxiID):
             del taxiSessions[oldToken]
         
     except Exception as e:
-        print(f"[SESSION MANAGER] THERE HAS BEEN AN ERROR ON ACTIVE SESSIONS REGISTRY FOR {taxiID}. {e}")
+        addToLogFile(f"[SESSION MANAGER] THERE HAS BEEN AN ERROR ON ACTIVE SESSIONS REGISTRY FOR {taxiID}. {e}", causingID="self")
 
     return token, certificate
 
@@ -1023,10 +1096,10 @@ def startAuthenticationService(SERVER, PORT):
         # then bind it to the ip address and port,
         server.bind((SERVER, PORT))
 
-        print("[TAXI AUTHENTICATION SERVICE]: Initializing server for taxi registration...")
+        addToLogFile("[TAXI AUTHENTICATION SERVICE]: Initializing server for taxi authentication...", causingID="self")
         # then, begin listening
         server.listen()
-        print(f"[TAXI AUTHENTICATION SERVICE]: Server active on {SERVER}:{PORT} ...")
+        addToLogFile(f"[TAXI AUTHENTICATION SERVICE]: Server active on {SERVER}:{PORT} ...", causingID="self")
         
         while True:
             try:
@@ -1038,10 +1111,10 @@ def startAuthenticationService(SERVER, PORT):
                 thread.daemon = True
                 thread.start()
             except Exception as e:
-                print(f"[TAXI AUTHENTICATION SERVICE]: THERE HAS BEEN AN ERROR WHILE STABLISHING CONNECTION WITH {addr}. {e}")
+                addToLogFile(f"[TAXI AUTHENTICATION SERVICE]: THERE HAS BEEN AN ERROR WHILE STABLISHING CONNECTION WITH {addr}. {e}", causingID=addr, directlyIP=True)
                 conn.close()
     except Exception as e:
-        print(f"[TAXI AUTHENTICATION SERVICE]: THERE HAS BEEN AN ERROR WHILE OPENING THE AUTHENTICATION SERVER")
+        addToLogFile(f"[TAXI AUTHENTICATION SERVICE]: THERE HAS BEEN AN ERROR WHILE OPENING THE AUTHENTICATION SERVER", causingID="self")
 
 # DESCRIPTION: Este método lo que hace es recibir el estado de los taxis.
 # STARTING_VALUES: la dirección del broker, y el puerto del broker
@@ -1089,7 +1162,7 @@ def hearTaxiStates():
                 producer.send
 
     except Exception as e:
-        print(f"[TAXI FLEET MANAGEMENT]: THERE HAS BEEN AN ERROR WHILE HEARING TAXIS' STATES. {e}")
+        addToLogFile(f"[TAXI FLEET MANAGEMENT]: THERE HAS BEEN AN ERROR WHILE HEARING TAXIS' STATES. {e}", causingID="self")
     finally:
         consumer.close()
         producer.close()
@@ -1160,14 +1233,14 @@ def manageTaxiDisconnection():
                 internalMemory.pop(item)
                 # We delete it from the disconnection dictionary
                 connDictionary.pop(item)
-                print(f'[DISCONNECTION HANDLER] Taxi {item} has been deleted from the database due to no connection')
+                addToLogFile(f'[DISCONNECTION HANDLER] Taxi {item} has been deleted from the database due to no connection', causingID=item)
 
             # We release the internal memory semaphore
             memLock.release()
             # We release the disconnection semaphore
             connDicLock.release()
     except Exception as e:
-        print(f'[DISCONNECTION HANDLER] THERE HAS BEEN AN ERROR WHILE KEEPING TRACK OF THE CONNECTIONS. {e}')
+        addToLogFile(f'[DISCONNECTION HANDLER] THERE HAS BEEN AN ERROR WHILE KEEPING TRACK OF THE CONNECTIONS. {e}', causingID="self")
 
 # DESCRIPTION: Este método lo que hace es informar al taxi sobre si el cliente se monta, o desmonta
 # STARTING_VALUES: string con "mount" o "dismount", id del taxi, la dirección del broker, el puerto del broker
@@ -1206,11 +1279,11 @@ def informTaxiAboutMountOrDismount(string, taxiID):
                             internalMemory.update({taxiID: newValue})
                         memLock.release()
                         return True
-        print(f'[CENTRAL CONTROL] Taxi {taxiID} hasn\'t answered the mount/dismount petition. Proceeding with deletion...')
+        addToLogFile(f'[CENTRAL CONTROL] Taxi {taxiID} hasn\'t answered the mount/dismount petition. Proceeding with deletion...', causingID=taxiID)
         # RESILIENCE
         return False   
     except Exception as e:
-        print(f"[TAXI SERVICE MANAGEMENT]: THERE HAS BEEN AN ERROR WHILE INFORMING TAXI {taxiID} ABOUT THE CLIENT MOUNT. {e}")
+        addToLogFile(f"[TAXI SERVICE MANAGEMENT]: THERE HAS BEEN AN ERROR WHILE INFORMING TAXI {taxiID} ABOUT THE CLIENT MOUNT. {e}", causingID="self")
     finally:
         producer.close()
         consumer.close()    
@@ -1227,11 +1300,9 @@ def sendTaxiToLocation(location, taxiID):
         producer = KafkaProducer(bootstrap_servers=str(BROKER_IP) + ':' + str(BROKER_PORT))
         consumer = KafkaConsumer('DE2CentralACK', bootstrap_servers=str(BROKER_IP) + ':' + str(BROKER_PORT), consumer_timeout_ms = 5000)
         # Encriptación y envío del mensaje 
-        print("------------------------------------Proceso de envío de orden: "+  (str(taxiID).zfill(2) + "_GO_" + str(location).zfill(3)))
         encodedOrderMessage = encodeMessage(taxiID, (str(taxiID).zfill(2) + "_GO_" + str(location).zfill(3)))
-        print(f"------------------------------------Orden generada: {encodedOrderMessage} ")
         producer.send("Central2DEOrder", encodedOrderMessage)
-        print(f'[SEND TAXI TO LOCATION] Sending taxi {taxiID} to location {str(location).zfill(3)}')
+        addToLogFile(f'[SEND TAXI TO LOCATION] Sending taxi {taxiID} to location {str(location).zfill(3)}', causingID="self")
         # We make a boolean to know if it has answered us
         answer = False
         for message in consumer:
@@ -1242,9 +1313,9 @@ def sendTaxiToLocation(location, taxiID):
                     break
         if not answer:
             # RESILIENCE
-            print(f'[SEND TAXI TO LOCATION] Taxi {taxiID} hasn\'t answered GO order. Proceeding with deletion...')
+            addToLogFile(f'[SEND TAXI TO LOCATION] Taxi {taxiID} hasn\'t answered GO order. Proceeding with deletion...', causingID=taxiID)
     except Exception as e:
-        print(f"[TAXI SERVICE MANAGEMENT]: THERE HAS BEEN AN ERROR WHILE SENDING THE TAXI TO THE LOCATION. {e}")
+        addToLogFile(f"[TAXI SERVICE MANAGEMENT]: THERE HAS BEEN AN ERROR WHILE SENDING THE TAXI TO THE LOCATION. {e}", causingID="self")
     finally:
         producer.close()
         consumer.close()    
@@ -1261,7 +1332,7 @@ def stopTaxi():
         consumer = KafkaConsumer('DE2CentralACK', bootstrap_servers=str(BROKER_IP) + ':' + str(BROKER_PORT))
         encodedOrderMessage = encodeMessage(taxiID, str(taxiID).zfill(2) + "_STOP")
         producer.send("Central2DEOrder", encodedOrderMessage)
-        print(f'[STOP TAXI] Stopping taxi {taxiID}')
+        addToLogFile(f'[STOP TAXI] Stopping taxi {taxiID}')
         # We make a boolean to know if it has answered us
         answer = False
         for message in consumer:
@@ -1272,10 +1343,10 @@ def stopTaxi():
                     break
         if not answer:
             # RESILIENCE
-            print(f'[STOP TAXI] Taxi {taxiID} hasn\'t answered STOP order. Proceeding with deletion...')
+            addToLogFile(f'[STOP TAXI] Taxi {taxiID} hasn\'t answered STOP order. Proceeding with deletion...', causingID=taxiID)
 
     except Exception as e:
-        print(f"[TAXI CONTROL]: THERE HAS BEEN AN ERROR WHILE STOPPING THE TAXI {taxiID}. {e}")
+        addToLogFile(f"[TAXI CONTROL]: THERE HAS BEEN AN ERROR WHILE STOPPING THE TAXI {taxiID}. {e}", causingID="self")
     finally:
         producer.close()
         consumer.close()
@@ -1292,7 +1363,7 @@ def resumeTaxi():
         consumer = KafkaConsumer('DE2CentralACK', bootstrap_servers=str(BROKER_IP) + ':' + str(BROKER_PORT))
         encodedOrderMessage = encodeMessage(taxiID, (taxiID).zfill(2) + "_RESUME")
         producer.send("Central2DEOrder", encodedOrderMessage)
-        print(f'[RESUME TAXI\'S WAY] Resuming taxi {taxiID} service')
+        addToLogFile(f'[RESUME TAXI\'S WAY] Resuming taxi {taxiID} service', causingID=taxiID)
         # We make a boolean to know if it has answered us
         answer = False
         for message in consumer:
@@ -1303,9 +1374,9 @@ def resumeTaxi():
                     break
         if not answer:
             # RESILIENCE
-            print(f'[RESUME TAXI\'S WAY] Taxi {taxiID} hasn\'t answered RESUME order. Proceeding with deletion...')
+            addToLogFile(f'[RESUME TAXI\'S WAY] Taxi {taxiID} hasn\'t answered RESUME order. Proceeding with deletion...', causingID=taxiID)
     except Exception as e:
-        print(f"[TAXI CONTROL]: THERE HAS BEEN AN ERROR WHILE RESUMING TAXI'S {taxiID} WAY. {e}")
+        addToLogFile(f"[TAXI CONTROL]: THERE HAS BEEN AN ERROR WHILE RESUMING TAXI'S {taxiID} WAY. {e}", causingID="self")
     finally:
         producer.close()
         consumer.close()
@@ -1358,7 +1429,7 @@ def createMap(mainFrame):
             mapButtons.append(row)
         return mapButtons
     except Exception as e:
-        print(f"[GUI MAP CREATOR]: THERE HAS BEEN AN ERROR WHILE CREATING THE MAP. {e}")
+        addToLogFile(f"[GUI MAP CREATOR]: THERE HAS BEEN AN ERROR WHILE CREATING THE MAP. {e}", causingID="self")
 
 # DESCRIPTION: Almacena en selectedPos la posición del mapa seleccionada
 # STARTING_VALUES: NONE
@@ -1368,7 +1439,7 @@ def onMapClick(x, y):
         global selectedPos
         # Manejar clic en una casilla del mapa (para futuras expansiones)
         selectedPos = y * MAP_COLUMNS + x
-        print(f"[GUI MANAGEMENT] Clicked on position: ({x}, {y}), sending to {selectedPos}")
+        addToLogFile(f"[GUI MANAGEMENT] Clicked on position: ({x}, {y}), sending to {selectedPos}", causingID="self")
 
 # DESCRIPTION: Almacena en selectedTaxi el taxi seleccionado
 # STARTING_VALUES: NONE
@@ -1377,7 +1448,7 @@ def onMapClick(x, y):
 def selectItem(a):
     global selectedTaxi
     curItem = taxiTableGlobal.focus()
-    print(f"[GUI MANAGEMENT] Selected item: {taxiTableGlobal.item(curItem)['values']}")
+    addToLogFile(f"[GUI MANAGEMENT] Selected item: {taxiTableGlobal.item(curItem)['values']}", causingID="self")
     selectedTaxi = taxiTableGlobal.item(curItem)['values'][0]
 
 # DESCRIPTION: Crear las tablas en la pantalla
@@ -1479,7 +1550,7 @@ def createTables(mainframe):
         clientFrame.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=(30,0))  # 10 píxeles de padding arriba
         return clientTable
     except Exception as e:
-        print(f"[GUI TABLE CREATOR]: THERE HAS BEEN AN ERROR WHILE CREATING TABLES. {e}")
+        addToLogFile(f"[GUI TABLE CREATOR]: THERE HAS BEEN AN ERROR WHILE CREATING TABLES. {e}", causingID="self")
 
 # DESCRIPTION: Actualiza el mapa en la pantalla
 # STARTING_VALUES: mapa, en forma de matriz de botones
@@ -1543,7 +1614,7 @@ def updateMap(mapButtons):
 
 
     except Exception as e:
-        print(f"[GUI MAP UPDATER]: THERE HAS BEEN AN ERROR WHILE UPDATING THE MAP. {e}")
+        addToLogFile(f"[GUI MAP UPDATER]: THERE HAS BEEN AN ERROR WHILE UPDATING THE MAP. {e}", causingID="self")
 
 # DESCRIPTION: Actualiza las tablas en la pantalla
 # STARTING_VALUES: tabla de cliente
@@ -1605,7 +1676,7 @@ def updateTables(clientTable):
                 ))
         memLock.release()
     except Exception as e:
-        print(f"[GUI TABLE UPDATER]: THERE HAS BEEN AN ERROR WHILE UPDATING TABLES. {e}")
+        addToLogFile(f"[GUI TABLE UPDATER]: THERE HAS BEEN AN ERROR WHILE UPDATING TABLES. {e}", causingID="self")
 
 # DESCRIPTION: Actualiza los elementos variables de la interfaz gráfica
 # STARTING_VALUES: mapa, en forma de matriz de botones
@@ -1639,6 +1710,7 @@ if  (len(sys.argv) == 5):
     connDictionary = {}
     clientConnections = {}
     taxiSessions = {}               # Dictitonary for active taxi sessions
+    IPsForIDs = {}
     # We initialize the semaphores used
     dbLock = threading.Lock()
     memLock = threading.Lock()
@@ -1646,9 +1718,11 @@ if  (len(sys.argv) == 5):
     clientLock = threading.Lock()
     clientConnectionsLock = threading.Lock()
     connDicLock = threading.Lock()
+    logFileLock = threading.Lock()
     
-    try:    
-
+    try: 
+        # Try to create a new log file
+        createLogFile()
         # We create the location dictionary
         readJsonConfigurationFile()
         # We check the database and create the tables if necessary
@@ -1715,26 +1789,17 @@ if  (len(sys.argv) == 5):
         clientTable = createTables(mainFrame)
         # Create map of size 20x20
         mapButtons = createMap(mainFrame)
-        time.sleep(3)
-
-        # # We create a thread to begin listening the LOCATION and DESTINATION messages
-        # hearLocationAndDestination = threading.Thread(target=updateGUI, args=(taxiTable, clientTable, mapButtons))
-        # hearLocationAndDestination.daemon = True
-        # hearLocationAndDestination.start()
         
         root.after(1000, lambda: updateGUI(clientTable, mapButtons, root))
 
         root.mainloop() 
-        # while True:
-        #     root.update()
-        #     updateGUI(taxiTable, clientTable, mapButtons)
 
     except KeyboardInterrupt:
-        print('[CENTRAL CONTROL] Application shutdown due to human interaction')
+        addToLogFile('[CENTRAL CONTROL] Application shutdown due to human interaction', causingID="self")
     except Exception as e:
-        print(f'[CENTRAL CONTROL] Application shutdown due to unexpected error. {e}')
+        addToLogFile(f'[CENTRAL CONTROL] Application shutdown due to unexpected error. {e}', causingID="self")
     finally:
-        print(f'EXITING CENTRAL APPLICATION')
+        addToLogFile(f'EXITING CENTRAL APPLICATION', causingID="self")
 
 else:
     print("Sorry, incorrect parameter use\n[USAGE <LISTENING IP> <LISTENING PORT> <BROKER IP> <BROKER PORT>]")
